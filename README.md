@@ -28,15 +28,60 @@ A versão multivariada com `air_horizontal_streamfunction`,
 `air_horizontal_velocity_potential` e `BUMP_VerticalBalance` será tratada
 apenas depois que a B univariada estiver validada.
 
-## Etapas
+## Executáveis MPAS no JACI
+
+Neste build, os executáveis do MPAS aparecem com nomes prefixados:
+
+- `mpas_init_atmosphere`
+- `mpas_atmosphere`
+- `mpas_atmosphere_build_tables`
+
+Caminho atual:
+
+```text
+/p/projetos/monan_das/joao.gerd/builds/monan-jedi-mpas/bin
+````
+
+## Malha piloto
+
+A malha inicial para desenvolvimento é:
+
+```text
+x1.10242_240km
+```
+
+Arquivos:
+
+```text
+/p/projetos/monan_das/joao.gerd/projects/mpas_meshes/quasi_uniform/x1.10242_240km/mesh/x1.10242.grid.nc
+/p/projetos/monan_das/joao.gerd/projects/mpas_meshes/quasi_uniform/x1.10242_240km/graph/x1.10242.graph.info
+```
+
+## Precisão do MPAS
+
+Este workflow foi iniciado usando o `mpas-bundle` com:
+
+```text
+-DMPAS_DOUBLE_PRECISION=OFF
+
+## Fluxo planejado
 
 ```text
 dados globais externos
-  -> init_atmosphere_model
+  -> mpas_init_atmosphere
   -> init.nc
-  -> atmosphere_model
+  -> mpas_atmosphere
   -> f024.nc / f048.nc
   -> perturbações NMC
   -> StdDev
   -> NICAS
   -> B estática
+```
+
+## Estado atual
+
+* Domínio: global.
+* LBC regional: não será usado.
+* MPAS: disponível no build `monan-jedi-mpas`.
+* Condições iniciais: ainda precisam ser geradas.
+* Fonte inicial de dados meteorológicos: ainda será definida.
