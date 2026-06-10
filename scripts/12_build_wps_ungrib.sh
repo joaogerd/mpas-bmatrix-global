@@ -127,7 +127,20 @@ STACK_INSTALL_ROOT="/p/projetos/monan_das/joao.gerd/env/spack-stack/spack-stack-
 find_first_dir_with_file() {
   local root="$1"
   local pattern="$2"
-  find "${root}" -type f -path "${pattern}" 2>/dev/null | head -1 | xargs -r dirname
+  local file
+  file=$(find "${root}" -type f -path "${pattern}" 2>/dev/null | head -1 || true)
+
+  if [[ -z "${file}" ]]; then
+    return 0
+  fi
+
+  # Special case: if the match is include/jasper/jasper.h,
+  # WPS expects JASPERINC to be the include root, not include/jasper.
+  if [[ "${file}" == */include/jasper/jasper.h ]]; then
+    dirname "$(dirname "${file}")"
+  else
+    dirname "${file}"
+  fi
 }
 
 find_first_lib_dir() {
@@ -181,9 +194,9 @@ rm -f configure.wps ungrib.exe ungrib/src/ungrib.exe
 
 echo
 
-echo "=== Run WPS configure ==="
+echo "=== Run WPS configure with --nowrf ==="
 echo "Selecting WPS configure option: ${WPS_CONFIGURE_OPTION}"
-printf '%s\n' "${WPS_CONFIGURE_OPTION}" | ./configure 2>&1 | tee "${PROJECT_ROOT}/logs/12_wps_configure.log"
+printf '%s\n' "${WPS_CONFIGURE_OPTION}" | ./configure --nowrf 2>&1 | tee "${PROJECT_ROOT}/logs/12_wps_configure.log"
 
 if [[ ! -f configure.wps ]]; then
   echo "ERRO: configure.wps was not generated."
