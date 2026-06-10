@@ -40,7 +40,7 @@ Caminho atual:
 
 ```text
 /p/projetos/monan_das/joao.gerd/builds/monan-jedi-mpas/bin
-````
+```
 
 ## Malha piloto
 
@@ -59,10 +59,22 @@ Arquivos:
 
 ## Precisão do MPAS
 
-Este workflow foi iniciado usando o `mpas-bundle` com:
+Este workflow foi iniciado usando o `mpas-bundle`/`MONAN-JEDI` com:
 
 ```text
 -DMPAS_DOUBLE_PRECISION=OFF
+```
+
+Por reprodutibilidade, os seguintes itens devem ser registrados sempre que uma rodada for usada para gerar estatísticas da matriz B:
+
+- commit do `MONAN-JEDI`;
+- valor de `MPAS_DOUBLE_PRECISION`;
+- caminho do `mpas_init_atmosphere`;
+- caminho do `mpas_atmosphere`;
+- caminho do `mpasjedi_error_covariance_toolbox.x`;
+- malha usada;
+- número de MPI tasks;
+- fonte das condições iniciais.
 
 ## Fluxo planejado
 
@@ -80,8 +92,20 @@ dados globais externos
 
 ## Estado atual
 
-* Domínio: global.
-* LBC regional: não será usado.
-* MPAS: disponível no build `monan-jedi-mpas`.
-* Condições iniciais: ainda precisam ser geradas.
-* Fonte inicial de dados meteorológicos: ainda será definida.
+- Domínio: global.
+- LBC regional: não será usado.
+- MPAS: disponível no build `monan-jedi-mpas`.
+- Precisão do build validado: `MPAS_DOUBLE_PRECISION=OFF`.
+- Malha piloto: `x1.10242`, aproximadamente 240 km.
+- Forecast global de 48 h validado no JACI com 64 MPI ranks.
+- Saídas `f024.nc` e `f048.nc` já são coletadas pelo script `scripts/08_collect_forecast_outputs.sh`.
+- Condições iniciais independentes ainda precisam ser geradas para formar pares NMC reais.
+- Fonte inicial de dados meteorológicos ainda será definida.
+
+## Documentação de status
+
+O status técnico da validação inicial está documentado em:
+
+```text
+docs/status_2026-06-10.md
+```
