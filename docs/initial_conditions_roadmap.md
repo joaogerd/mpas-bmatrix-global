@@ -2,7 +2,7 @@
 
 ## Estado após inventário
 
-O inventário `scripts/09_inventory_initial_condition_sources.sh` mostrou que o ambiente JACI atual já possui:
+O inventário `scripts/legacy/09_inventory_initial_condition_sources.sh` mostrou que o ambiente JACI atual já possui:
 
 - `mpas_init_atmosphere`;
 - `mpas_atmosphere`;
@@ -76,5 +76,5 @@ validade T:
 2. Definir uma Vtable para a fonte escolhida, preferencialmente GFS/GDAS no primeiro teste.
 3. Definir o diretório WPS geog.
 4. Gerar `FILE:*` para um ciclo piloto.
-5. Rodar `scripts/10_prepare_init_from_wps_intermediate.sh`.
+5. Rodar `scripts/legacy/10_prepare_init_from_wps_intermediate.sh`.
 6. Submeter `mpas_init_atmosphere` para gerar o primeiro `init.nc` independente.
