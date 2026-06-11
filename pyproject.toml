@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mpas-bmatrix-global"
+version = "0.1.0"
+description = "Workflow Python para preparar e executar MPAS global e pares NMC"
+requires-python = ">=3.8"
+dependencies = ["PyYAML>=5"]
+
+[project.scripts]
+mpaswf = "mpas_workflow.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
