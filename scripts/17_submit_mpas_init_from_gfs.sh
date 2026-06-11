@@ -37,7 +37,7 @@ for f in \
   "${RUN_DIR}/x1.10242.graph.info.part.${NPROC}"; do
   if [[ ! -e "${f}" ]]; then
     echo "ERRO: required run file not found: ${f}"
-    echo "Run scripts/16_prepare_mpas_init_from_gfs.sh first."
+    echo "Run scripts/16_prepare_mpas_init_from_gfs.sh or scripts/19_prepare_mpas_init_from_gfs_invariant.sh first."
     exit 1
   fi
 done
@@ -50,19 +50,20 @@ fi
 
 cp "${PBS_TEMPLATE}" "${PBS_FILE}"
 
-# Keep the template generic but make the submitted file explicit/reproducible.
+# Make the submitted PBS file explicit/reproducible. Do not depend on qsub
+# inheriting shell variables, because some PBS configurations do not export them
+# unless -V or -v is used.
 python3 - <<PY
 from pathlib import Path
+import re
+
 p = Path("${PBS_FILE}")
 txt = p.read_text()
-txt = txt.replace(
-    "RUN_DIR=${RUN_DIR:-/p/projetos/monan_das/joao.gerd/work/mpas-bmatrix-global/mpas_init/x1.10242/2026-06-11_00:00:00_np64}",
-    "RUN_DIR=${RUN_DIR:-${RUN_DIR}}",
-)
-txt = txt.replace(
-    "NPROC=${NPROC:-64}",
-    "NPROC=${NPROC:-${NPROC}}",
-)
+
+txt = re.sub(r"^PROJECT_ROOT=.*$", "PROJECT_ROOT=${PROJECT_ROOT}", txt, flags=re.MULTILINE)
+txt = re.sub(r"^RUN_DIR=.*$", "RUN_DIR=${RUN_DIR}", txt, flags=re.MULTILINE)
+txt = re.sub(r"^NPROC=.*$", "NPROC=${NPROC}", txt, flags=re.MULTILINE)
+
 p.write_text(txt)
 PY
 
@@ -71,6 +72,10 @@ echo "PROJECT_ROOT=${PROJECT_ROOT}"
 echo "RUN_DIR=${RUN_DIR}"
 echo "NPROC=${NPROC}"
 echo "PBS_FILE=${PBS_FILE}"
+echo
+
+echo "PBS fixed assignments:"
+grep -nE "^(PROJECT_ROOT|RUN_DIR|NPROC)=" "${PBS_FILE}"
 echo
 
 cd "${RUN_DIR}"
