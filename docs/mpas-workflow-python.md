@@ -141,13 +141,23 @@ scripts/mpaswf nmc one-pair \
 
 Depois que o PBS terminar, rode o mesmo comando novamente.
 
-## Política sobre scripts antigos
+## Scripts legados
 
-Os scripts antigos em `scripts/*.sh` ficam temporariamente como legado/referência.
+Os scripts shell numerados foram movidos para:
 
-A migração recomendada é:
+```text
+scripts/legacy/
+````
 
-* manter `scripts/load_jaci_env.sh`, pois ele é usado para carregar o ambiente;
-* manter temporariamente os scripts numerados como `legacy`;
-* evoluir o fluxo novo apenas em Python;
-* futuramente mover os scripts antigos para `scripts/legacy/`.
+Eles ficam disponíveis apenas como referência histórica. O fluxo oficial deve usar a CLI Python `mpaswf`.
+
+Os únicos scripts mantidos diretamente em `scripts/` são:
+
+```text
+scripts/mpaswf
+scripts/load_jaci_env.sh
+```
+
+* `scripts/mpaswf` é o wrapper da CLI Python.
+* `scripts/load_jaci_env.sh` continua sendo usado para carregar o ambiente JACI/MPAS nos jobs PBS.
+
