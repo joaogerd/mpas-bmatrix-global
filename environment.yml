@@ -1,0 +1,27 @@
+name: mpaswf
+
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.11
+  - pip
+
+  # Dependências Python principais
+  - pyyaml
+  - numpy
+  - netcdf4
+  - cftime
+  - xarray
+
+  # Bibliotecas binárias usadas por netCDF4/xarray
+  - libnetcdf
+  - hdf5
+
+  # Desenvolvimento
+  - pytest
+  - ruff
+
+  # Instala o pacote local em modo editável
+  - pip:
+      - -e .
