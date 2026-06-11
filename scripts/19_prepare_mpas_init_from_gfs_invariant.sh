@@ -43,6 +43,7 @@ NPROC=${NPROC:-64}
 INVARIANT_FILE=${INVARIANT_FILE:-/p/projetos/monan_das/joao.gerd/data/mpasjedi_tutorial2024_testdata/MPAS_namelist_stream_physics_files/x1.10242.invariant.nc}
 
 INIT_TIME=${INIT_TIME:-2026-06-11_00:00:00}
+INIT_TIME_SAFE=${INIT_TIME//:/.}
 WPS_RUN_DIR=${WPS_RUN_DIR:-${WORK_ROOT}/wps_ungrib/gfs.2026061100.f000}
 WPS_FILE=${WPS_FILE:-${WPS_RUN_DIR}/FILE:2026-06-11_00}
 RUN_DIR=${RUN_DIR:-${WORK_ROOT}/mpas_init/${MESH_NAME}/${INIT_TIME}_invariant_np${NPROC}}
@@ -62,6 +63,7 @@ echo "GRAPH_FILE=${GRAPH_FILE}"
 echo "PARTITION_DIR=${PARTITION_DIR}"
 echo "NPROC=${NPROC}"
 echo "INIT_TIME=${INIT_TIME}"
+echo "INIT_TIME_SAFE=${INIT_TIME_SAFE}"
 echo "WPS_RUN_DIR=${WPS_RUN_DIR}"
 echo "WPS_FILE=${WPS_FILE}"
 echo "RUN_DIR=${RUN_DIR}"
@@ -154,9 +156,12 @@ import re
 p = Path("streams.init_atmosphere")
 txt = p.read_text()
 
+outname = "${MESH_NAME}.init.${INIT_TIME_SAFE}.nc"
+
 txt = txt.replace("x1.40962", "${MESH_NAME}")
-txt = txt.replace("${MESH_NAME}.init.nc", "${MESH_NAME}.init.${INIT_TIME}.nc")
-txt = re.sub(r"${MESH_NAME}\.init\.nc", "${MESH_NAME}.init.${INIT_TIME}.nc", txt)
+txt = txt.replace("${MESH_NAME}.init.nc", outname)
+txt = re.sub(r"${MESH_NAME}\.init\.[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9:.]+\.nc", outname, txt)
+txt = re.sub(r"${MESH_NAME}\.init\.nc", outname, txt)
 
 p.write_text(txt)
 PY
@@ -172,4 +177,4 @@ echo
 
 echo "SUCCESS: MPAS init run directory prepared from invariant/static file."
 echo "RUN_DIR=${RUN_DIR}"
-echo "Expected output candidate: ${RUN_DIR}/${MESH_NAME}.init.${INIT_TIME}.nc"
+echo "Expected output candidate: ${RUN_DIR}/${MESH_NAME}.init.${INIT_TIME_SAFE}.nc"
