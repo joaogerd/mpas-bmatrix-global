@@ -7,7 +7,7 @@ from .config import load_config
 from .wps import run_ungrib, ungrib_run_dir
 from .mpas_init import prepare_init, submit_init, validate_init, init_file
 from .forecast import prepare_forecast, submit_forecast
-from .nmc import prepare_pair
+from .nmc import prepare_pair, validate_pair, diff_pair, parse_variables_arg
 
 
 DEFAULT_CONFIG = "configs/jaci-x1.10242.yaml"
@@ -59,6 +59,15 @@ def parser():
     pair.add_argument("--valid-time", required=True)
     pair.add_argument("--dt", type=int)
 
+    val = nmc_sub.add_parser("validate")
+    val.add_argument("--valid-time", required=True)
+    val.add_argument("--no-strict", action="store_true")
+
+    diff = nmc_sub.add_parser("diff")
+    diff.add_argument("--valid-time", required=True)
+    diff.add_argument("--variables")
+    diff.add_argument("--output")
+
     one = nmc_sub.add_parser("one-pair")
     one.add_argument("--old-init-time", required=True)
     one.add_argument("--new-init-time", required=True)
@@ -99,6 +108,15 @@ def main(argv=None):
     if args.cmd == "nmc":
         if args.nmc_cmd == "pair":
             prepare_pair(cfg, args.old_init_time, args.new_init_time, args.valid_time, args.dt)
+        elif args.nmc_cmd == "validate":
+            validate_pair(cfg, args.valid_time, strict=not args.no_strict)
+        elif args.nmc_cmd == "diff":
+            diff_pair(
+                cfg,
+                args.valid_time,
+                variables=parse_variables_arg(args.variables),
+                output=args.output,
+            )
         elif args.nmc_cmd == "one-pair":
             # Orquestração idempotente: prepara tudo que falta e submete se solicitado.
             dt = args.dt or cfg["runtime"]["config_dt"]
