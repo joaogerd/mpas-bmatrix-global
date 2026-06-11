@@ -15,6 +15,7 @@ INIT_TIME=${INIT_TIME:-2026-06-11_00:00:00}
 INIT_TIME_SAFE=${INIT_TIME//:/.}
 RUN_DURATION=${RUN_DURATION:-0_06:00:00}
 OUTPUT_INTERVAL=${OUTPUT_INTERVAL:-06:00:00}
+CONFIG_DT=${CONFIG_DT:-}
 
 MPAS_EXE=${MPAS_EXE:-${INSTALL_ROOT}/bin/mpas_atmosphere}
 ATM_SHARE=${ATM_SHARE:-${INSTALL_ROOT}/share/MPAS/core_atmosphere}
@@ -76,9 +77,11 @@ done
 python3 - <<PY
 from pathlib import Path
 import re
+
 p = Path('namelist.atmosphere')
 txt = p.read_text()
-for pat, rep in {
+
+repls = {
     r"config_start_time\s*=\s*'[^']*'": "config_start_time = '${INIT_TIME}'",
     r"config_run_duration\s*=\s*'[^']*'": "config_run_duration = '${RUN_DURATION}'",
     r"config_do_restart\s*=\s*\.[a-zA-Z]+\.": "config_do_restart = .false.",
@@ -87,8 +90,20 @@ for pat, rep in {
     r"config_sstdiurn_update\s*=\s*\.[a-zA-Z]+\.": "config_sstdiurn_update = .false.",
     r"config_deepsoiltemp_update\s*=\s*\.[a-zA-Z]+\.": "config_deepsoiltemp_update = .false.",
     r"config_do_DAcycling\s*=\s*\.[a-zA-Z]+\.": "config_do_DAcycling = .false.",
-}.items():
+}
+
+for pat, rep in repls.items():
     txt = re.sub(pat, rep, txt)
+
+config_dt = "${CONFIG_DT}"
+if config_dt:
+    pat = r"config_dt\s*=\s*[-+0-9.eEdD]+"
+    rep = f"config_dt = {config_dt}"
+    if re.search(pat, txt):
+        txt = re.sub(pat, rep, txt)
+    else:
+        txt = txt.replace('/\n', f"    {rep}\n/\n", 1)
+
 p.write_text(txt)
 PY
 
@@ -104,7 +119,7 @@ EOF_STREAMS
 
 cat > run_mpas_forecast.pbs <<EOF_PBS
 #!/bin/bash
-#PBS -N mpas_f006_x1.10242
+#PBS -N mpas_fcst_x1.10242
 #PBS -q pesqmini
 #PBS -l select=1:ncpus=${NPROC}:mpiprocs=${NPROC}
 #PBS -l walltime=00:30:00
@@ -131,6 +146,7 @@ EOF_PBS
 
 echo "SUCCESS: MPAS forecast run directory prepared."
 echo "RUN_DIR=${RUN_DIR}"
+echo "CONFIG_DT=${CONFIG_DT:-default-from-namelist}"
 echo
 
 echo "Namelist summary:"
