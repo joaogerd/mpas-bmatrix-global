@@ -1,16 +1,103 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from .config import load_config
 from .wps import run_ungrib, ungrib_run_dir
 from .mpas_init import prepare_init, submit_init, validate_init, init_file
-from .forecast import prepare_forecast, submit_forecast
+from .forecast import prepare_forecast, submit_forecast, restart_file
 from .nmc import prepare_pair, validate_pair, diff_pair, parse_variables_arg
 
 
 DEFAULT_CONFIG = "configs/jaci-x1.10242.yaml"
+TIME_FORMAT = "%Y-%m-%d_%H:%M:%S"
+
+
+def parse_time(value: str) -> datetime:
+    return datetime.strptime(value, TIME_FORMAT)
+
+
+def format_time(value: datetime) -> str:
+    return value.strftime(TIME_FORMAT)
+
+
+def iter_times(start: str, end: str, step_hours: int):
+    if step_hours <= 0:
+        raise SystemExit("ERRO: --valid-interval-hours deve ser positivo.")
+
+    current = parse_time(start)
+    last = parse_time(end)
+    step = timedelta(hours=step_hours)
+
+    while current <= last:
+        yield format_time(current)
+        current += step
+
+
+def nmc_times_from_valid_time(valid_time: str):
+    valid = parse_time(valid_time)
+    old_init_time = valid - timedelta(hours=48)
+    new_init_time = valid - timedelta(hours=24)
+    return format_time(old_init_time), format_time(new_init_time), valid_time
+
+
+def ensure_init_ready(cfg, init_time: str, submit: bool = False) -> bool:
+    try:
+        validate_init(cfg, init_time)
+        return True
+    except SystemExit:
+        print(f"Init ausente ou inválido para {init_time}; preparando.")
+
+    run_ungrib(cfg, init_time)
+    prepare_init(cfg, init_time, ungrib_run_dir(cfg, init_time) / f"FILE:{init_time[:13]}")
+
+    if submit:
+        submit_init(cfg, init_time)
+        print("Job de init submetido. Rode o mesmo comando novamente após terminar.")
+    else:
+        print("Init preparado. Use --submit para submeter automaticamente.")
+
+    return False
+
+
+def ensure_forecast_ready(cfg, init_time: str, lead_hours: int, dt: int, submit: bool = False) -> bool:
+    rf = restart_file(cfg, init_time, lead_hours, dt)
+    if rf.exists():
+        print(f"OK: forecast f{lead_hours:03d} existente: {rf}")
+        return True
+
+    prepare_forecast(cfg, init_time, lead_hours, dt)
+
+    if submit:
+        submit_forecast(cfg, init_time, lead_hours, dt)
+        print("Job de forecast submetido. Rode o mesmo comando novamente após terminar.")
+    else:
+        print("Forecast preparado. Use --submit para submeter automaticamente.")
+
+    return False
+
+
+def run_one_pair(cfg, old_init_time: str, new_init_time: str, valid_time: str, dt: int, submit: bool, make_diff: bool, variables):
+    for init_time in [old_init_time, new_init_time]:
+        if not ensure_init_ready(cfg, init_time, submit=submit):
+            return False
+
+    if not ensure_forecast_ready(cfg, old_init_time, 48, dt, submit=submit):
+        return False
+
+    if not ensure_forecast_ready(cfg, new_init_time, 24, dt, submit=submit):
+        return False
+
+    prepare_pair(cfg, old_init_time, new_init_time, valid_time, dt)
+    validate_pair(cfg, valid_time, strict=True)
+
+    if make_diff:
+        diff_pair(cfg, valid_time, variables=variables)
+
+    print(f"SUCCESS: par NMC completo para VALID_TIME={valid_time}.")
+    return True
 
 
 def parser():
@@ -35,6 +122,15 @@ def parser():
 
     iv = init_sub.add_parser("validate")
     iv.add_argument("--init-time", required=True)
+
+    cycle = sub.add_parser("cycle")
+    cycle_sub = cycle.add_subparsers(dest="cycle_cmd", required=True)
+
+    cr = cycle_sub.add_parser("run")
+    cr.add_argument("--init-time", required=True)
+    cr.add_argument("--lead-hours", type=int, required=True)
+    cr.add_argument("--dt", type=int)
+    cr.add_argument("--submit", action="store_true")
 
     fc = sub.add_parser("forecast")
     fc_sub = fc.add_subparsers(dest="forecast_cmd", required=True)
@@ -74,6 +170,17 @@ def parser():
     one.add_argument("--valid-time", required=True)
     one.add_argument("--dt", type=int)
     one.add_argument("--submit", action="store_true")
+    one.add_argument("--diff", action="store_true")
+    one.add_argument("--variables")
+
+    rng = nmc_sub.add_parser("range")
+    rng.add_argument("--start-valid-time", required=True)
+    rng.add_argument("--end-valid-time", required=True)
+    rng.add_argument("--valid-interval-hours", type=int, default=24)
+    rng.add_argument("--dt", type=int)
+    rng.add_argument("--submit", action="store_true")
+    rng.add_argument("--diff", action="store_true")
+    rng.add_argument("--variables")
 
     return p
 
@@ -98,6 +205,16 @@ def main(argv=None):
             validate_init(cfg, args.init_time)
         return
 
+    if args.cmd == "cycle":
+        if args.cycle_cmd == "run":
+            dt = int(args.dt or cfg["runtime"]["config_dt"])
+            if not ensure_init_ready(cfg, args.init_time, submit=args.submit):
+                return
+            if not ensure_forecast_ready(cfg, args.init_time, args.lead_hours, dt, submit=args.submit):
+                return
+            print(f"SUCCESS: ciclo completo para {args.init_time} f{args.lead_hours:03d}.")
+        return
+
     if args.cmd == "forecast":
         if args.forecast_cmd == "prepare":
             prepare_forecast(cfg, args.init_time, args.lead_hours, args.dt, args.output_interval)
@@ -118,31 +235,41 @@ def main(argv=None):
                 output=args.output,
             )
         elif args.nmc_cmd == "one-pair":
-            # Orquestração idempotente: prepara tudo que falta e submete se solicitado.
-            dt = args.dt or cfg["runtime"]["config_dt"]
-
-            for init_time in [args.old_init_time, args.new_init_time]:
-                try:
-                    validate_init(cfg, init_time)
-                except SystemExit:
-                    print(f"Init ausente ou inválido para {init_time}; preparando.")
-                    run_ungrib(cfg, init_time)
-                    prepare_init(cfg, init_time, ungrib_run_dir(cfg, init_time) / f"FILE:{init_time[:13]}")
-                    if args.submit:
-                        submit_init(cfg, init_time)
-                        print("Job de init submetido. Rode o mesmo comando novamente após terminar.")
-                        return
-
-            jobs = [(args.old_init_time, 48), (args.new_init_time, 24)]
-            from .forecast import restart_file
-            for init_time, lead in jobs:
-                rf = restart_file(cfg, init_time, lead, dt)
-                if not rf.exists():
-                    prepare_forecast(cfg, init_time, lead, dt)
-                    if args.submit:
-                        submit_forecast(cfg, init_time, lead, dt)
-                        print("Job de forecast submetido. Rode o mesmo comando novamente após terminar.")
-                        return
-
-            prepare_pair(cfg, args.old_init_time, args.new_init_time, args.valid_time, dt)
+            dt = int(args.dt or cfg["runtime"]["config_dt"])
+            run_one_pair(
+                cfg,
+                old_init_time=args.old_init_time,
+                new_init_time=args.new_init_time,
+                valid_time=args.valid_time,
+                dt=dt,
+                submit=args.submit,
+                make_diff=args.diff,
+                variables=parse_variables_arg(args.variables),
+            )
+        elif args.nmc_cmd == "range":
+            dt = int(args.dt or cfg["runtime"]["config_dt"])
+            variables = parse_variables_arg(args.variables)
+            for valid_time in iter_times(
+                args.start_valid_time,
+                args.end_valid_time,
+                args.valid_interval_hours,
+            ):
+                old_init_time, new_init_time, _ = nmc_times_from_valid_time(valid_time)
+                print("\n=== NMC valid time ===")
+                print(f"VALID_TIME={valid_time}")
+                print(f"OLD_INIT_TIME={old_init_time}")
+                print(f"NEW_INIT_TIME={new_init_time}")
+                done = run_one_pair(
+                    cfg,
+                    old_init_time=old_init_time,
+                    new_init_time=new_init_time,
+                    valid_time=valid_time,
+                    dt=dt,
+                    submit=args.submit,
+                    make_diff=args.diff,
+                    variables=variables,
+                )
+                if not done:
+                    print("Par ainda não concluído. Rode o mesmo comando novamente após o PBS terminar.")
+                    break
         return
