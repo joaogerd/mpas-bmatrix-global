@@ -57,7 +57,13 @@ def default_workspace(config, start_valid_time: str, end_valid_time: str) -> Pat
     )
 
 
-def build_pairs_from_range(config, start_valid_time: str, end_valid_time: str, step_hours: int, dt: int) -> list[BflowPair]:
+def build_pairs_from_range(
+    config,
+    start_valid_time: str,
+    end_valid_time: str,
+    step_hours: int,
+    dt: int,
+) -> list[BflowPair]:
     pairs: list[BflowPair] = []
     for valid_time in iter_valid_times(start_valid_time, end_valid_time, step_hours):
         valid = parse_time(valid_time)
@@ -225,7 +231,7 @@ begin
 end
 EOF_NCL
 
-ncl generateEsmfWeights.ncl
+ncl generateEsmfWeights.ncl < /dev/null
 """
     path = workspace / "scripts" / "01_generate_esmf_weights.bash"
     write_text(path, script)
@@ -366,12 +372,8 @@ end
 EOF_NCL
 }}
 
-tail -n +2 "$MANIFEST" | while IFS=$'\t' read -r valid f048 f024; do
-  vcompact=$(python - <<PY
-from datetime import datetime
-print(datetime.strptime("$valid", "%Y-%m-%d_%H:%M:%S").strftime("%Y%m%d%H"))
-PY
-)
+while IFS=$'\t' read -r valid f048 f024; do
+  vcompact=$(python -c 'from datetime import datetime; import sys; print(datetime.strptime(sys.argv[1], "%Y-%m-%d_%H:%M:%S").strftime("%Y%m%d%H"))' "$valid")
   outdir="output/$vcompact"
   mkdir -p "$outdir"
 
@@ -385,10 +387,13 @@ PY
   make_ncl "$in24" "$outdir/FULL_f24.nc" "$outdir/uv_to_psichi_f24.ncl"
 
   echo "NCL f48 $valid"
-  ncl "$outdir/uv_to_psichi_f48.ncl"
+  ncl "$outdir/uv_to_psichi_f48.ncl" < /dev/null
+  test -f "$outdir/FULL_f48.nc" || {{ echo "ERRO: NCL não gerou $outdir/FULL_f48.nc" >&2; exit 1; }}
+
   echo "NCL f24 $valid"
-  ncl "$outdir/uv_to_psichi_f24.ncl"
-done
+  ncl "$outdir/uv_to_psichi_f24.ncl" < /dev/null
+  test -f "$outdir/FULL_f24.nc" || {{ echo "ERRO: NCL não gerou $outdir/FULL_f24.nc" >&2; exit 1; }}
+done < <(tail -n +2 "$MANIFEST")
 """
     path = workspace / "scripts" / "03_convert_uv_to_psichi.bash"
     write_text(path, script)
@@ -583,17 +588,108 @@ if __name__ == "__main__":
     path.chmod(0o755)
 
 
+def write_validate_script(workspace: Path) -> None:
+    script = r'''#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import csv
+from datetime import datetime
+from pathlib import Path
+
+import netCDF4
+
+ROOT = Path(__file__).resolve().parents[1]
+MANIFEST = ROOT / "manifest.tsv"
+
+FULL_REQUIRED = [
+    "stream_function",
+    "velocity_potential",
+]
+
+PTB_REQUIRED = [
+    "stream_function",
+    "velocity_potential",
+    "temperature",
+    "spechum",
+    "pressure",
+    "surface_pressure",
+    "uReconstructZonal",
+    "uReconstructMeridional",
+]
+
+
+def compact(valid_time: str) -> str:
+    return datetime.strptime(valid_time, "%Y-%m-%d_%H:%M:%S").strftime("%Y%m%d%H")
+
+
+def require_vars(path: Path, names: list[str]):
+    if not path.exists():
+        raise SystemExit(f"ERRO: produto ausente: {path}")
+    with netCDF4.Dataset(path) as ds:
+        for name in names:
+            if name not in ds.variables:
+                raise SystemExit(f"ERRO: variável ausente em {path}: {name}")
+            var = ds.variables[name]
+            if name in {"stream_function", "velocity_potential"}:
+                expected = ("Time", "nCells", "nVertLevels")
+                if tuple(var.dimensions) != expected:
+                    raise SystemExit(
+                        f"ERRO: dimensões inválidas para {name} em {path}: "
+                        f"{var.dimensions}; esperado {expected}"
+                    )
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--stage", choices=["full", "ptb"], required=True)
+    args = parser.parse_args()
+
+    with MANIFEST.open(newline="") as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        for row in reader:
+            vdir = ROOT / "output" / compact(row["valid_time"])
+            if args.stage == "full":
+                require_vars(vdir / "FULL_f48.nc", FULL_REQUIRED)
+                require_vars(vdir / "FULL_f24.nc", FULL_REQUIRED)
+            else:
+                require_vars(vdir / "PTB_f48mf24.nc", PTB_REQUIRED)
+            print(f"OK {args.stage}: {row['valid_time']}")
+
+
+if __name__ == "__main__":
+    main()
+'''
+    path = workspace / "scripts" / "06_validate_products.py"
+    write_text(path, script)
+    path.chmod(0o755)
+
+
 def write_master_script(workspace: Path) -> None:
     script = """#!/usr/bin/env bash
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-bash scripts/01_generate_esmf_weights.bash
+if [[ "${CLEAN_OUTPUT:-0}" == "1" ]]; then
+  echo "Cleaning output directory"
+  rm -rf output
+  mkdir -p output
+fi
+mkdir -p output logs
+
+if [[ "${SKIP_WEIGHTS:-0}" != "1" ]]; then
+  bash scripts/01_generate_esmf_weights.bash
+else
+  echo "Skipping ESMF weights because SKIP_WEIGHTS=1"
+fi
+
 bash scripts/02_generate_template_ptb.bash
 bash scripts/03_convert_uv_to_psichi.bash
+python scripts/06_validate_products.py --stage full
 python scripts/04_add_variables.py
 python scripts/05_ncdiff.py
+python scripts/06_validate_products.py --stage ptb
 
 find output -name 'PTB_f48mf24.nc' -printf '%p\n' | sort
 """
@@ -606,7 +702,7 @@ def write_readme(workspace: Path, pairs: list[BflowPair]) -> None:
     lines = [
         "# Bflow preprocessing workspace",
         "",
-        "Generated by `mpasbflow prepare`.",
+        "Generated by `mpasbflow prepare` or `mpasbflow all`.",
         "",
         "## Inputs",
         "",
@@ -625,7 +721,7 @@ def write_readme(workspace: Path, pairs: list[BflowPair]) -> None:
             "## Run",
             "",
             "```bash",
-            "bash scripts/run_all_bflow.sh",
+            "mpasbflow run --workspace $(pwd) --clean-output",
             "```",
             "",
             "Products are written below `output/YYYYMMDDHH/`.",
@@ -648,20 +744,22 @@ def prepare_workspace(config, pairs: list[BflowPair], workspace: Path, force: bo
     write_psichi_script(config, workspace)
     write_add_variables_script(workspace)
     write_ncdiff_script(workspace)
+    write_validate_script(workspace)
     write_master_script(workspace)
     write_readme(workspace, pairs)
     return workspace
 
 
-def prepare_command(args) -> int:
-    config = load_config(args.config)
+def pairs_from_args(args, config) -> tuple[list[BflowPair], str, str]:
     dt = int(args.dt or config["runtime"]["config_dt"])
 
-    if args.manifest:
+    if getattr(args, "manifest", None):
         pairs = read_manifest(args.manifest)
         start = pairs[0].valid_time
         end = pairs[-1].valid_time
     else:
+        if not args.start_valid_time or not args.end_valid_time:
+            raise SystemExit("ERRO: informe --manifest ou --start-valid-time e --end-valid-time.")
         pairs = build_pairs_from_range(
             config,
             args.start_valid_time,
@@ -672,7 +770,17 @@ def prepare_command(args) -> int:
         start = args.start_valid_time
         end = args.end_valid_time
 
-    workspace = Path(args.workspace) if args.workspace else default_workspace(config, start, end)
+    return pairs, start, end
+
+
+def workspace_from_args(args, config, start: str, end: str) -> Path:
+    return Path(args.workspace) if getattr(args, "workspace", None) else default_workspace(config, start, end)
+
+
+def prepare_command(args) -> int:
+    config = load_config(args.config)
+    pairs, start, end = pairs_from_args(args, config)
+    workspace = workspace_from_args(args, config, start, end)
     workspace = prepare_workspace(config, pairs, workspace, force=args.force)
 
     print("=== Bflow preprocessing workspace ===")
@@ -681,51 +789,91 @@ def prepare_command(args) -> int:
     print(f"PAIRS={len(pairs)}")
     print()
     print("Para rodar:")
-    print(f"  cd {workspace}")
-    print("  bash scripts/run_all_bflow.sh | tee logs/run_all_bflow.log")
+    print(f"  mpasbflow run --workspace {workspace} --clean-output")
     return 0
 
 
-def run_command(args) -> int:
-    workspace = Path(args.workspace)
+def run_workspace(workspace: Path, clean_output: bool = False, skip_weights: bool = False) -> int:
     require_file(workspace / "scripts" / "run_all_bflow.sh", "run_all_bflow.sh")
+    (workspace / "logs").mkdir(parents=True, exist_ok=True)
+
     env = os.environ.copy()
-    proc = subprocess.run(
-        ["bash", "scripts/run_all_bflow.sh"],
-        cwd=workspace,
-        env=env,
-        check=False,
-    )
+    if clean_output:
+        env["CLEAN_OUTPUT"] = "1"
+    if skip_weights:
+        env["SKIP_WEIGHTS"] = "1"
+
+    cmd = "set -o pipefail; bash scripts/run_all_bflow.sh 2>&1 | tee logs/run_all_bflow.log"
+    proc = subprocess.run(["bash", "-lc", cmd], cwd=workspace, env=env, check=False)
     return proc.returncode
 
 
+def run_command(args) -> int:
+    return run_workspace(
+        Path(args.workspace),
+        clean_output=args.clean_output,
+        skip_weights=args.skip_weights,
+    )
+
+
+def all_command(args) -> int:
+    config = load_config(args.config)
+    pairs, start, end = pairs_from_args(args, config)
+    workspace = workspace_from_args(args, config, start, end)
+    workspace = prepare_workspace(config, pairs, workspace, force=args.force)
+
+    print("=== Bflow preprocessing all ===")
+    print(f"WORKSPACE={workspace}")
+    print(f"PAIRS={len(pairs)}")
+    print(f"LOG={workspace / 'logs' / 'run_all_bflow.log'}")
+    print()
+
+    return run_workspace(
+        workspace,
+        clean_output=args.clean_output,
+        skip_weights=args.skip_weights,
+    )
+
+
+def add_common_range_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--config", default=DEFAULT_CONFIG)
+    parser.add_argument("--start-valid-time")
+    parser.add_argument("--end-valid-time")
+    parser.add_argument("--valid-interval-hours", type=int, default=24)
+    parser.add_argument("--dt", type=int)
+    parser.add_argument("--manifest")
+    parser.add_argument("--workspace")
+    parser.add_argument("--force", action="store_true")
+
+
 def parser():
-    p = argparse.ArgumentParser(prog="mpasbflow", description="Prepara e executa o Bflow preprocessing do MPAS-JEDI")
+    p = argparse.ArgumentParser(
+        prog="mpasbflow",
+        description="Prepara e executa o Bflow preprocessing do MPAS-JEDI",
+    )
     sub = p.add_subparsers(dest="cmd", required=True)
 
     prep = sub.add_parser("prepare", help="Cria workspace/scripts Bflow a partir do range ou manifesto")
-    prep.add_argument("--config", default=DEFAULT_CONFIG)
-    prep.add_argument("--start-valid-time")
-    prep.add_argument("--end-valid-time")
-    prep.add_argument("--valid-interval-hours", type=int, default=24)
-    prep.add_argument("--dt", type=int)
-    prep.add_argument("--manifest")
-    prep.add_argument("--workspace")
-    prep.add_argument("--force", action="store_true")
+    add_common_range_args(prep)
     prep.set_defaults(func=prepare_command)
 
     run = sub.add_parser("run", help="Executa scripts/run_all_bflow.sh em um workspace já preparado")
     run.add_argument("--workspace", required=True)
+    run.add_argument("--clean-output", action="store_true")
+    run.add_argument("--skip-weights", action="store_true")
     run.set_defaults(func=run_command)
+
+    allp = sub.add_parser("all", help="Prepara, limpa opcionalmente, executa e valida o Bflow de ponta a ponta")
+    add_common_range_args(allp)
+    allp.add_argument("--clean-output", action="store_true")
+    allp.add_argument("--skip-weights", action="store_true")
+    allp.set_defaults(func=all_command)
 
     return p
 
 
 def main(argv=None):
     args = parser().parse_args(argv)
-    if args.cmd == "prepare" and not args.manifest:
-        if not args.start_valid_time or not args.end_valid_time:
-            raise SystemExit("ERRO: informe --manifest ou --start-valid-time e --end-valid-time.")
     return args.func(args)
 
 
