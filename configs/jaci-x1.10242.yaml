@@ -19,7 +19,7 @@ mesh:
   grid: /p/projetos/monan_das/joao.gerd/projects/mpas_meshes/quasi_uniform/x1.10242_240km/mesh/x1.10242.grid.nc
   graph: /p/projetos/monan_das/joao.gerd/projects/mpas_meshes/quasi_uniform/x1.10242_240km/graph/x1.10242.graph.info
   partitions_dir: /p/projetos/monan_das/joao.gerd/projects/mpas_meshes/quasi_uniform/x1.10242_240km/partitions
-  nproc: 64
+  nproc: 128
   nvertlevels: 55
 
 static:
@@ -36,7 +36,7 @@ pbs:
   queue: pesqmini
   queues:
     forecast: pesqmidi
-  nproc: 64
+  nproc: 128
   walltime:
     init: "00:10:00"
     forecast:
