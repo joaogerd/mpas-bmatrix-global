@@ -13,7 +13,7 @@ Substituir o conjunto de scripts numerados por uma CLI única, com etapas explí
 5. Montar pares NMC `f048 - f024`;
 6. Validar pares NMC e gerar diferenças NetCDF;
 7. Orquestrar ciclos e intervalos de pares NMC de forma idempotente;
-8. Coletar amostras NMC e calcular estatísticas iniciais para a matriz B.
+8. Coletar amostras NMC, fazer diagnósticos e preparar execuções do `mpasjedi_error_covariance_toolbox.x`.
 
 ## Instalação em modo desenvolvimento
 
@@ -211,7 +211,9 @@ mpaswf nmc range \
 
 O comando é idempotente. Se algum init ou forecast ainda não existir, ele prepara/submete o job necessário e para. Depois que o PBS terminar, rode o mesmo comando novamente.
 
-## Estatísticas iniciais para matriz B
+## Diagnóstico das amostras NMC
+
+Os comandos abaixo não substituem o `mpasjedi_error_covariance_toolbox.x`. Eles servem para organizar as amostras e fazer uma checagem estatística preliminar antes de chamar o toolbox oficial do MPAS-JEDI.
 
 Depois que vários pares NMC já tiverem arquivos `nmc_diff_f048_minus_f024.nc`, colete as amostras:
 
@@ -230,7 +232,7 @@ work/mpas-bmatrix-global/bmatrix/samples/sample_00002.nc
 ...
 ```
 
-Em seguida, calcule estatísticas por variável:
+Em seguida, calcule estatísticas de diagnóstico por variável:
 
 ```bash
 mpaswf bmatrix stats \
@@ -251,7 +253,42 @@ Para cada variável solicitada, o arquivo contém:
 <var>_stddev
 ```
 
-Essa é a primeira camada estatística do workflow. A etapa seguinte será converter essas estatísticas e amostras para os formatos esperados pelo SABER/BUMP no MPAS-JEDI.
+## Execução do MPAS-JEDI error covariance toolbox
+
+A geração operacional da matriz B deve usar o executável do MPAS-JEDI:
+
+```text
+/p/projetos/monan_das/joao.gerd/builds/monan-jedi-mpas/bin/mpasjedi_error_covariance_toolbox.x
+```
+
+Depois de preparar um YAML do toolbox, gere um diretório de execução PBS:
+
+```bash
+mpaswf bmatrix toolbox-prepare \
+  --yaml configs/jedi/bmatrix/mpas-bmatrix.yaml \
+  --name x1.10242-nmc
+```
+
+Isso cria:
+
+```text
+work/mpas-bmatrix-global/bmatrix/toolbox/x1.10242-nmc/
+```
+
+com o executável, o YAML e o PBS:
+
+```text
+run_mpasjedi_error_covariance_toolbox.pbs
+```
+
+Submeta com:
+
+```bash
+mpaswf bmatrix toolbox-submit \
+  --name x1.10242-nmc
+```
+
+Esse wrapper ainda não gera o conteúdo do YAML automaticamente. O objetivo é controlar a execução do toolbox oficial dentro do mesmo workflow. A próxima etapa é criar o template YAML do SABER/BUMP usando as amostras listadas no `manifest.csv`.
 
 ## Scripts legados
 
