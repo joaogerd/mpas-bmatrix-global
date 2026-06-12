@@ -1,19 +1,18 @@
 from __future__ import annotations
 
 import csv
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List, Optional
 
 import numpy as np
 
-from .nmc import parse_variables_arg
-from .shell import symlink_force
+from .shell import qsub, require_file, symlink_force, write_text
 
 
 TIME_FORMAT = "%Y-%m-%d_%H:%M:%S"
 DEFAULT_VARIABLES = ["u", "w", "rho", "theta", "qv", "surface_pressure"]
+TOOLBOX_EXE = "mpasjedi_error_covariance_toolbox.x"
 
 
 def parse_time(value: str) -> datetime:
@@ -22,6 +21,17 @@ def parse_time(value: str) -> datetime:
 
 def bmatrix_root(config) -> Path:
     return Path(config["project"]["work_root"]) / "bmatrix"
+
+
+def toolbox_executable(config) -> Path:
+    configured = config.get("install", {}).get("mpasjedi_error_covariance_toolbox")
+    if configured:
+        return Path(configured)
+    return Path(config["install"]["root"]) / "bin" / TOOLBOX_EXE
+
+
+def toolbox_run_dir(config, name: str) -> Path:
+    return bmatrix_root(config) / "toolbox" / name
 
 
 def _valid_time_from_pair_dir(path: Path) -> Optional[str]:
@@ -171,3 +181,69 @@ def compute_stats(config, manifest: Optional[str | Path], variables: Optional[It
     print("=== B-matrix NMC statistics ===")
     print(f"OUTPUT={output_path}")
     return output_path
+
+
+def _toolbox_pbs(config, run_dir: Path, yaml_file: Path, nproc: int) -> str:
+    project_root = config["project"]["project_root"]
+    loader = config["environment"]["loader"]
+    queue = config["pbs"]["queue"]
+    walltime = config["pbs"].get("walltime_long", "04:00:00")
+    return f'''#!/bin/bash
+#PBS -N mpasjedi_bmatrix
+#PBS -q {queue}
+#PBS -l select=1:ncpus={nproc}:mpiprocs={nproc}
+#PBS -l walltime={walltime}
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT={project_root}
+RUN_DIR={run_dir}
+
+source "${{PROJECT_ROOT}}/{loader}"
+
+cd "${{RUN_DIR}}"
+
+export OMP_NUM_THREADS=1
+export FI_CXI_RX_MATCH_MODE=hybrid
+ulimit -s unlimited || true
+
+mpiexec -n {nproc} ./{TOOLBOX_EXE} {yaml_file.name} > stdout.log 2> stderr.log
+'''
+
+
+def prepare_toolbox(config, yaml_file: str | Path, name: str = "default", nproc: Optional[int] = None) -> Path:
+    src_yaml = require_file(yaml_file, "YAML do mpasjedi_error_covariance_toolbox")
+    exe = require_file(toolbox_executable(config), TOOLBOX_EXE)
+    nproc = int(nproc or config["pbs"].get("nproc") or config["mesh"]["nproc"])
+
+    run_dir = toolbox_run_dir(config, name)
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    symlink_force(exe, run_dir / TOOLBOX_EXE)
+    symlink_force(src_yaml, run_dir / src_yaml.name)
+    write_text(run_dir / "run_mpasjedi_error_covariance_toolbox.pbs", _toolbox_pbs(config, run_dir, src_yaml, nproc))
+
+    readme = (
+        "# MPAS-JEDI error covariance toolbox\n\n"
+        f"- executable: `{exe}`\n"
+        f"- yaml: `{src_yaml}`\n"
+        f"- nproc: `{nproc}`\n\n"
+        "Submit with:\n\n"
+        "```bash\n"
+        "qsub run_mpasjedi_error_covariance_toolbox.pbs\n"
+        "```\n"
+    )
+    write_text(run_dir / "README.md", readme)
+
+    print("=== MPAS-JEDI error covariance toolbox ===")
+    print(f"RUN_DIR={run_dir}")
+    print(f"YAML={run_dir / src_yaml.name}")
+    print(f"PBS={run_dir / 'run_mpasjedi_error_covariance_toolbox.pbs'}")
+    return run_dir
+
+
+def submit_toolbox(config, name: str = "default"):
+    run_dir = toolbox_run_dir(config, name)
+    pbs = require_file(run_dir / "run_mpasjedi_error_covariance_toolbox.pbs", "PBS do toolbox")
+    qsub(pbs.name, run_dir)
