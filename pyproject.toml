@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mpas-bmatrix-global"
+version = "0.1.0"
+description = "Workflow Python para preparar e executar MPAS global e pares NMC"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+  { name = "João Gerd Zell de Mattos" }
+]
+license = { text = "MIT" }
+
+dependencies = [
+  "PyYAML>=6.0",
+  "numpy>=1.24",
+  "netCDF4>=1.6",
+  "cftime>=1.6",
+  "xarray>=2024.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "ruff>=0.5",
+]
+
+[project.scripts]
+mpaswf = "mpas_workflow.cli:main"
+mpasbm = "mpas_workflow.bmatrix:main"
+mpasbflow = "mpas_workflow.bflow:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
