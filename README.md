@@ -22,6 +22,14 @@ Configuração padrão JACI:
 configs/jaci-x1.10242.yaml
 ```
 
+## Documentação do sistema
+
+Guia técnico completo do sistema de geração dos estados MPAS usados no cálculo da matriz B:
+
+```text
+docs/mpas-bmatrix-workflow-system.md
+```
+
 ## Documentação JACI
 
 Resumo operacional da infraestrutura JACI, filas PBS, tempos máximos, tipos de nós, filesystems e boas práticas:
@@ -34,11 +42,5 @@ docs/jaci-operational-guide.md
 
 ```bash
 export PYTHONPATH=$PWD/src:$PYTHONPATH
-
-scripts/mpaswf nmc one-pair \
-  --old-init-time 2026-06-10_00:00:00 \
-  --new-init-time 2026-06-11_00:00:00 \
-  --valid-time 2026-06-12_00:00:00 \
-  --dt 60 \
-  --submit
+scripts/mpaswf nmc one-pair --old-init-time 2026-06-10_00:00:00 --new-init-time 2026-06-11_00:00:00 --valid-time 2026-06-12_00:00:00 --dt 60 --submit
 ```
