@@ -29,6 +29,7 @@ dev = [
 
 [project.scripts]
 mpaswf = "mpas_workflow.cli:main"
+mpasbm = "mpas_workflow.bmatrix:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
