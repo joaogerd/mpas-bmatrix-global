@@ -9,6 +9,11 @@ from .forecast import restart_file
 from .shell import require_file, symlink_force, write_text
 
 
+# Default variables observed in the current MPAS x1.10242 restart files and useful
+# for the first NMC/B-matrix workflow checks. Derived or alias names such as
+# pressure, temperature, air_temperature, and water_vapor_mixing_ratio_* are not
+# included here because they are not present in the generated MPAS restart/diff
+# files used by this workflow.
 DEFAULT_DIFF_VARIABLES = [
     "u",
     "w",
@@ -20,9 +25,12 @@ DEFAULT_DIFF_VARIABLES = [
     "qi",
     "qs",
     "qg",
-    "pressure",
     "pressure_p",
     "surface_pressure",
+]
+
+OPTIONAL_DERIVED_OR_ALIAS_VARIABLES = [
+    "pressure",
     "temperature",
     "air_temperature",
     "water_vapor_mixing_ratio_wrt_moist_air",
@@ -198,7 +206,6 @@ def validate_pair(config, valid_time, strict: bool = True):
                 f"dimensões incompatíveis na variável {var}: "
                 f"f048={v048['dims']}, f024={v024['dims']}"
             )
-
     print("=== NMC pair validation ===")
     print(f"PAIR_DIR={out}")
     print(f"F048={f048.resolve()}")
