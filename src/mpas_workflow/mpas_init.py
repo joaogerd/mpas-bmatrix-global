@@ -35,6 +35,18 @@ def patch_namelist(text, replacements):
     return text
 
 
+def patch_streams_init_atmosphere(text: str, mesh_name: str, output_filename: str) -> str:
+    # The MPAS-JEDI installed template may refer to a tutorial mesh, e.g. x1.40962.grid.nc.
+    # For this workflow, the mesh stream must point to the mesh configured in configs/*.yaml.
+    text = re.sub(r"filename_template=\"x1\.[0-9]+\.grid\.nc\"", f"filename_template=\"{mesh_name}.grid.nc\"", text)
+    text = re.sub(r"filename_template='x1\.[0-9]+\.grid\.nc'", f"filename_template='{mesh_name}.grid.nc'", text)
+
+    # Keep output filenames safe for SMIOL by replacing ':' with '.' in the generated init file.
+    text = re.sub(r"filename_template=\"x1\.[0-9]+\.init\.[^\"]+\.nc\"", f"filename_template=\"{output_filename}\"", text)
+    text = re.sub(r"filename_template='x1\.[0-9]+\.init\.[^']+\.nc'", f"filename_template='{output_filename}'", text)
+    return text
+
+
 def _tail(path: Path, n: int = 80) -> str:
     if not path.exists():
         return f"{path} não existe"
@@ -111,7 +123,14 @@ def prepare_init(config, init_time, wps_file):
         "config_block_decomp_file_prefix": f"'{Path(mesh['graph']).name}.part.'",
     })
     write_text(run_dir / "namelist.init_atmosphere", namelist)
-    write_text(run_dir / "streams.init_atmosphere", streams.read_text())
+
+    streams_text = streams.read_text()
+    streams_text = patch_streams_init_atmosphere(
+        streams_text,
+        mesh_name=mesh["name"],
+        output_filename=Path(init_file(config, init_time)).name,
+    )
+    write_text(run_dir / "streams.init_atmosphere", streams_text)
 
     write_text(run_dir / "run_mpas_init.pbs", mpas_init_pbs(config, run_dir, nproc))
     print(f"OK: diretório de init preparado: {run_dir}")
