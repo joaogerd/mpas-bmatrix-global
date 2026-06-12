@@ -88,6 +88,7 @@ def validate_forecast_setup(config, init_time, lead_hours, dt, output_interval):
 
     namelist = (run_dir / "namelist.atmosphere").read_text(errors="replace")
     streams = (run_dir / "streams.atmosphere").read_text(errors="replace")
+    pbs_text = (run_dir / "run_mpas_forecast.pbs").read_text(errors="replace")
 
     run_duration = f"{lead_hours // 24}_{lead_hours % 24:02d}:00:00"
     required_namelist_tokens = [
@@ -112,10 +113,16 @@ def validate_forecast_setup(config, init_time, lead_hours, dt, output_interval):
         if token not in streams:
             raise SystemExit(f"ERRO: streams.atmosphere não contém configuração esperada: {token}")
 
+    if "#PBS -l walltime=" not in pbs_text:
+        raise SystemExit("ERRO: PBS de forecast não contém diretiva walltime.")
+
     print("OK: preflight do MPAS forecast passou")
     print(f"  RUN_DIR={run_dir}")
     print(f"  INIT_INPUT={run_dir / 'init.nc'}")
     print(f"  EXPECTED_RESTART={expected_restart}")
+    for line in pbs_text.splitlines():
+        if line.startswith("#PBS -q") or line.startswith("#PBS -l walltime") or line.startswith("#PBS -l select"):
+            print(f"  PBS={line}")
 
 
 def prepare_forecast(config, init_time, lead_hours, dt=None, output_interval=None):
@@ -210,7 +217,7 @@ def prepare_forecast(config, init_time, lead_hours, dt=None, output_interval=Non
 </streams>
 '''
     write_text(run_dir / "streams.atmosphere", streams)
-    write_text(run_dir / "run_mpas_forecast.pbs", mpas_forecast_pbs(config, run_dir, nproc))
+    write_text(run_dir / "run_mpas_forecast.pbs", mpas_forecast_pbs(config, run_dir, nproc, lead_hours=lead_hours))
     validate_forecast_setup(config, init_time, lead_hours, dt, output_interval)
 
     print(f"OK: forecast f{lead_hours:03d} preparado: {run_dir}")
