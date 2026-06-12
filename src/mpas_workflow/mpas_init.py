@@ -49,7 +49,7 @@ def patch_streams_init_atmosphere(text: str, mesh_name: str, output_filename: st
     """Patch the MPAS init streams template for the configured mesh/run.
 
     The installed MPAS-JEDI template may contain tutorial mesh names such as
-    x1.40962.grid.nc and output names such as x1.40962.init.nc.  Leaving those
+    x1.40962.grid.nc and output names such as x1.40962.init.nc. Leaving those
     values in place makes the job fail only after PBS submission, so we patch and
     validate the generated stream file before qsub.
     """
@@ -204,6 +204,36 @@ def print_init_diagnostics(config, init_time, jobid: str | None = None):
         print(_tail(path))
 
 
+def init_validation_error(config, init_time) -> str | None:
+    """Return an init validation error message without printing diagnostics.
+
+    This is intentionally quiet and is used by workflow drivers to decide whether
+    a stale/partial run directory should be rebuilt. Detailed diagnostics should
+    only be printed after a job that was just submitted fails, not when probing an
+    old failed directory at the beginning of a new workflow run.
+    """
+    f = init_file(config, init_time)
+    if not f.exists():
+        return f"init.nc não encontrado: {f}"
+
+    log = init_run_dir(config, init_time) / "log.init_atmosphere.0000.out"
+    if not log.exists():
+        return f"log.init_atmosphere.0000.out não encontrado: {log}"
+
+    txt = log.read_text(errors="replace")
+    if "Critical error messages =            0" not in txt:
+        return f"init não terminou limpo. Veja {log}"
+
+    if "Error messages =                     0" not in txt:
+        return f"init terminou com mensagens de erro. Veja {log}"
+
+    return None
+
+
+def init_is_valid(config, init_time) -> bool:
+    return init_validation_error(config, init_time) is None
+
+
 def prepare_init(config, init_time, wps_file):
     run_dir = init_run_dir(config, init_time)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -273,23 +303,9 @@ def submit_init(config, init_time):
 
 
 def validate_init(config, init_time, jobid: str | None = None):
-    f = init_file(config, init_time)
-    if not f.exists():
+    error = init_validation_error(config, init_time)
+    if error is not None:
         print_init_diagnostics(config, init_time, jobid=jobid)
-        raise SystemExit(f"ERRO: init.nc não encontrado: {f}")
+        raise SystemExit(f"ERRO: {error}")
 
-    log = init_run_dir(config, init_time) / "log.init_atmosphere.0000.out"
-    if not log.exists():
-        print_init_diagnostics(config, init_time, jobid=jobid)
-        raise SystemExit(f"ERRO: log.init_atmosphere.0000.out não encontrado: {log}")
-
-    txt = log.read_text(errors="replace")
-    if "Critical error messages =            0" not in txt:
-        print_init_diagnostics(config, init_time, jobid=jobid)
-        raise SystemExit(f"ERRO: init não terminou limpo. Veja {log}")
-
-    if "Error messages =                     0" not in txt:
-        print_init_diagnostics(config, init_time, jobid=jobid)
-        raise SystemExit(f"ERRO: init terminou com mensagens de erro. Veja {log}")
-
-    print(f"OK: init validado: {f}")
+    print(f"OK: init validado: {init_file(config, init_time)}")
