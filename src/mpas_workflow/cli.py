@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from .bmatrix import collect_samples, compute_stats
 from .config import load_config
 from .wps import run_ungrib, ungrib_run_dir
 from .mpas_init import prepare_init, submit_init, validate_init, init_file
@@ -79,7 +80,16 @@ def ensure_forecast_ready(cfg, init_time: str, lead_hours: int, dt: int, submit:
     return False
 
 
-def run_one_pair(cfg, old_init_time: str, new_init_time: str, valid_time: str, dt: int, submit: bool, make_diff: bool, variables):
+def run_one_pair(
+    cfg,
+    old_init_time: str,
+    new_init_time: str,
+    valid_time: str,
+    dt: int,
+    submit: bool,
+    make_diff: bool,
+    variables,
+):
     for init_time in [old_init_time, new_init_time]:
         if not ensure_init_ready(cfg, init_time, submit=submit):
             return False
@@ -182,6 +192,18 @@ def parser():
     rng.add_argument("--diff", action="store_true")
     rng.add_argument("--variables")
 
+    bmatrix = sub.add_parser("bmatrix")
+    bmatrix_sub = bmatrix.add_subparsers(dest="bmatrix_cmd", required=True)
+
+    bc = bmatrix_sub.add_parser("collect")
+    bc.add_argument("--start-valid-time")
+    bc.add_argument("--end-valid-time")
+
+    bs = bmatrix_sub.add_parser("stats")
+    bs.add_argument("--manifest")
+    bs.add_argument("--variables")
+    bs.add_argument("--output")
+
     return p
 
 
@@ -272,4 +294,20 @@ def main(argv=None):
                 if not done:
                     print("Par ainda não concluído. Rode o mesmo comando novamente após o PBS terminar.")
                     break
+        return
+
+    if args.cmd == "bmatrix":
+        if args.bmatrix_cmd == "collect":
+            collect_samples(
+                cfg,
+                start_valid_time=args.start_valid_time,
+                end_valid_time=args.end_valid_time,
+            )
+        elif args.bmatrix_cmd == "stats":
+            compute_stats(
+                cfg,
+                manifest=args.manifest,
+                variables=parse_variables_arg(args.variables),
+                output=args.output,
+            )
         return
