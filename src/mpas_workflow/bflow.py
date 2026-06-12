@@ -36,10 +36,6 @@ def compact_time(value: str) -> str:
     return parse_time(value).strftime("%Y%m%d%H")
 
 
-def file_time(value: str) -> str:
-    return value.replace(":", ".")
-
-
 def iter_valid_times(start: str, end: str, step_hours: int):
     if step_hours <= 0:
         raise SystemExit("ERRO: --valid-interval-hours deve ser positivo.")
@@ -150,13 +146,12 @@ module load ncl netcdf 2>/dev/null || module load ncl 2>/dev/null || true
 
 ln -sf "{invariant}" ./MPAS_{mesh_name}.nc
 isSinglePrecision=$(ncdump -h ./MPAS_{mesh_name}.nc | grep 'float latCell' | wc -l)
-echo "isSinglePrecision=${{isSinglePrecision}}"
+echo "isSinglePrecision=$isSinglePrecision"
 
 cat > generateEsmfWeights.ncl <<'EOF_NCL'
 load "$NCARG_ROOT/lib/ncarg/nclscripts/esmf/ESMF_regridding.ncl"
 
 begin
-    srcFileName = "N/A"
     dstFileName = "MPAS_{mesh_name}.nc"
     interpMethod = "bilinear"
 
@@ -245,24 +240,24 @@ cd "$(dirname "$0")/.."
 module load nco 2>/dev/null || true
 
 REF="{first_ref}"
-require_file() {{ test -f "$1" || {{ echo "ERRO: arquivo não encontrado: $1" >&2; exit 1; }}; }}
-require_file "$REF"
+test -f "$REF" || {{ echo "ERRO: arquivo não encontrado: $REF" >&2; exit 1; }}
 
 rm -f template_PTB.nc template_PTB.nc_single template_PTB.nc_work
 
 ncks -O -v theta "$REF" template_PTB.nc_single
-ncap2 -O -s 'theta=0.0' template_PTB.nc_single template_PTB.nc_single
+# Preserve theta dimensions. Using theta=0.0 collapses the variable to a scalar in some NCO builds.
+ncap2 -O -s 'theta=theta*0.0' template_PTB.nc_single template_PTB.nc_single
 
 cp template_PTB.nc_single template_PTB.nc_work
 ncrename -O -v theta,stream_function template_PTB.nc_work
 ncatted -O -a long_name,stream_function,o,c,'stream function' template_PTB.nc_work
-ncatted -O -a units,stream_function,o,c,'m^2 s^{-2}' template_PTB.nc_work
+ncatted -O -a units,stream_function,o,c,'m^2 s^(-2)' template_PTB.nc_work
 ncks -O -v stream_function template_PTB.nc_work template_PTB.nc
 
 cp template_PTB.nc_single template_PTB.nc_work
 ncrename -O -v theta,velocity_potential template_PTB.nc_work
 ncatted -O -a long_name,velocity_potential,o,c,'velocity potential' template_PTB.nc_work
-ncatted -O -a units,velocity_potential,o,c,'m^2 s^{-2}' template_PTB.nc_work
+ncatted -O -a units,velocity_potential,o,c,'m^2 s^(-2)' template_PTB.nc_work
 ncks -A -v velocity_potential template_PTB.nc_work template_PTB.nc
 
 rm -f template_PTB.nc_single template_PTB.nc_work
@@ -358,7 +353,9 @@ begin
   vp_cell4write@units = "m^2 s^(-2)"
   vp_cell4write@long_name = "velocity potential"
 
-  system("cp " + FILE_TEMPLATE + " " + FILE_OUT)
+  system("/bin/rm -f " + FILE_OUT)
+  system("/bin/cp " + FILE_TEMPLATE + " " + FILE_OUT)
+  system("/bin/chmod u+w " + FILE_OUT)
   f_out = addfile(FILE_OUT,"rw")
   f_out->stream_function    = sf_cell4write
   f_out->velocity_potential = vp_cell4write
@@ -375,11 +372,17 @@ from datetime import datetime
 print(datetime.strptime("$valid", "%Y-%m-%d_%H:%M:%S").strftime("%Y%m%d%H"))
 PY
 )
-  outdir="output/${{vcompact}}"
+  outdir="output/$vcompact"
   mkdir -p "$outdir"
 
-  make_ncl "$f048" "$outdir/FULL_f48.nc" "$outdir/uv_to_psichi_f48.ncl"
-  make_ncl "$f024" "$outdir/FULL_f24.nc" "$outdir/uv_to_psichi_f24.ncl"
+  in48="inputs/$vcompact/f048.nc"
+  in24="inputs/$vcompact/f024.nc"
+  test -f "$in48" || {{ echo "ERRO: input ausente: $in48" >&2; exit 1; }}
+  test -f "$in24" || {{ echo "ERRO: input ausente: $in24" >&2; exit 1; }}
+
+  rm -f "$outdir/FULL_f48.nc" "$outdir/FULL_f24.nc" "$outdir/uv_to_psichi_f48.ncl" "$outdir/uv_to_psichi_f24.ncl"
+  make_ncl "$in48" "$outdir/FULL_f48.nc" "$outdir/uv_to_psichi_f48.ncl"
+  make_ncl "$in24" "$outdir/FULL_f24.nc" "$outdir/uv_to_psichi_f24.ncl"
 
   echo "NCL f48 $valid"
   ncl "$outdir/uv_to_psichi_f48.ncl"
@@ -400,7 +403,6 @@ import csv
 from datetime import datetime
 from pathlib import Path
 
-import numpy as np
 import netCDF4
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -451,6 +453,8 @@ def upsert_var(dst, src_var, name, data=None):
 
 
 def add_variables(input_path: Path, full_path: Path):
+    if not full_path.exists():
+        raise SystemExit(f"ERRO: FULL file não existe; rode primeiro uv_to_psichi: {full_path}")
     with netCDF4.Dataset(input_path) as src, netCDF4.Dataset(full_path, "a") as dst:
         theta = src.variables["theta"]
         ensure_dims(src, dst, theta)
@@ -467,7 +471,6 @@ def add_variables(input_path: Path, full_path: Path):
             ensure_dims(src, dst, var)
             upsert_var(dst, var, name)
 
-        # pressure is derived from pressure_p + pressure_base.
         pvar = src.variables["pressure_p"]
         out = upsert_var(dst, pvar, "pressure", pressure.astype(pvar.dtype, copy=False))
         out.setncattr("long_name", "pressure")
@@ -530,6 +533,8 @@ def copy_attrs(src, dst):
 
 
 def diff_file(f48: Path, f24: Path, out: Path, valid_time: str):
+    if out.exists():
+        out.unlink()
     with netCDF4.Dataset(f48) as ds48, netCDF4.Dataset(f24) as ds24, netCDF4.Dataset(out, "w") as dst:
         for name, dim in ds48.dimensions.items():
             dst.createDimension(name, None if dim.isunlimited() else len(dim))
@@ -630,9 +635,6 @@ def write_readme(workspace: Path, pairs: list[BflowPair]) -> None:
 
 
 def prepare_workspace(config, pairs: list[BflowPair], workspace: Path, force: bool = False) -> Path:
-    if workspace.exists() and force:
-        # Keep inputs/large products safe by not deleting recursively. We only overwrite generated scripts/manifest/symlinks.
-        pass
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "scripts").mkdir(exist_ok=True)
     (workspace / "logs").mkdir(exist_ok=True)
