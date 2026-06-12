@@ -35,8 +35,20 @@ wps:
 pbs:
   queue: pesqmini
   nproc: 64
-  walltime_short: "00:30:00"
-  walltime_long: "04:00:00"
+
+  # JACI queue policy for pesqmini: keep smoke/test jobs short.
+  # Walltimes are task-specific so the workflow does not accidentally submit
+  # a 4-hour forecast to a short test queue.
+  walltime:
+    init: "00:10:00"
+    forecast:
+      f024: "00:30:00"
+      f048: "00:30:00"
+      default: "00:30:00"
+
+  # Backward-compatible keys kept for older code paths.
+  walltime_short: "00:10:00"
+  walltime_long: "00:30:00"
 
 runtime:
   config_dt: 60
