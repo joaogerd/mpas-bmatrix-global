@@ -4,7 +4,7 @@ import argparse
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .bmatrix import collect_samples, compute_stats
+from .bmatrix import collect_samples, compute_stats, prepare_toolbox, submit_toolbox
 from .config import load_config
 from .wps import run_ungrib, ungrib_run_dir
 from .mpas_init import prepare_init, submit_init, validate_init, init_file
@@ -204,6 +204,14 @@ def parser():
     bs.add_argument("--variables")
     bs.add_argument("--output")
 
+    bp = bmatrix_sub.add_parser("toolbox-prepare")
+    bp.add_argument("--yaml", required=True)
+    bp.add_argument("--name", default="default")
+    bp.add_argument("--nproc", type=int)
+
+    bt = bmatrix_sub.add_parser("toolbox-submit")
+    bt.add_argument("--name", default="default")
+
     return p
 
 
@@ -310,4 +318,13 @@ def main(argv=None):
                 variables=parse_variables_arg(args.variables),
                 output=args.output,
             )
+        elif args.bmatrix_cmd == "toolbox-prepare":
+            prepare_toolbox(
+                cfg,
+                yaml_file=args.yaml,
+                name=args.name,
+                nproc=args.nproc,
+            )
+        elif args.bmatrix_cmd == "toolbox-submit":
+            submit_toolbox(cfg, name=args.name)
         return
