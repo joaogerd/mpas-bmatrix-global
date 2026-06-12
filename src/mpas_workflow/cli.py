@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .config import load_config
 from .wps import run_ungrib, ungrib_run_dir
-from .mpas_init import prepare_init, submit_init, validate_init
+from .mpas_init import prepare_init, submit_init, validate_init, init_validation_error
 from .forecast import prepare_forecast, submit_forecast, restart_file
 from .nmc import prepare_pair, validate_pair, diff_pair, parse_variables_arg
 from .shell import wait_for_pbs_job
@@ -45,11 +45,13 @@ def nmc_times_from_valid_time(valid_time: str):
 
 
 def ensure_init_ready(cfg, init_time: str, submit: bool = False, wait: bool = False, poll_seconds: int = 30) -> bool:
-    try:
+    error = init_validation_error(cfg, init_time)
+    if error is None:
         validate_init(cfg, init_time)
         return True
-    except SystemExit:
-        print(f"Init ausente ou inválido para {init_time}; preparando.")
+
+    print(f"Init não pronto para {init_time}: {error}")
+    print("Preparando novo diretório de init; diagnósticos antigos foram suprimidos nesta sondagem.")
 
     run_ungrib(cfg, init_time)
     prepare_init(cfg, init_time, ungrib_run_dir(cfg, init_time) / f"FILE:{init_time[:13]}")
