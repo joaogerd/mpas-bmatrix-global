@@ -132,4 +132,4 @@ def submit_forecast(config, init_time, lead_hours, dt=None):
     dt = int(dt or config["runtime"]["config_dt"])
     run_dir = forecast_run_dir(config, init_time, lead_hours, dt)
     require_file(run_dir / "run_mpas_forecast.pbs", "PBS de forecast")
-    qsub("run_mpas_forecast.pbs", run_dir)
+    return qsub("run_mpas_forecast.pbs", run_dir)
