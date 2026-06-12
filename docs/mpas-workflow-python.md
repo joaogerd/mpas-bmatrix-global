@@ -12,7 +12,8 @@ Substituir o conjunto de scripts numerados por uma CLI única, com etapas explí
 4. Preparar e submeter `mpas_atmosphere`;
 5. Montar pares NMC `f048 - f024`;
 6. Validar pares NMC e gerar diferenças NetCDF;
-7. Orquestrar ciclos e intervalos de pares NMC de forma idempotente.
+7. Orquestrar ciclos e intervalos de pares NMC de forma idempotente;
+8. Coletar amostras NMC e calcular estatísticas iniciais para a matriz B.
 
 ## Instalação em modo desenvolvimento
 
@@ -209,6 +210,48 @@ mpaswf nmc range \
 ```
 
 O comando é idempotente. Se algum init ou forecast ainda não existir, ele prepara/submete o job necessário e para. Depois que o PBS terminar, rode o mesmo comando novamente.
+
+## Estatísticas iniciais para matriz B
+
+Depois que vários pares NMC já tiverem arquivos `nmc_diff_f048_minus_f024.nc`, colete as amostras:
+
+```bash
+mpaswf bmatrix collect \
+  --start-valid-time 2026-06-12_00:00:00 \
+  --end-valid-time 2026-06-15_00:00:00
+```
+
+Esse comando cria:
+
+```text
+work/mpas-bmatrix-global/bmatrix/samples/manifest.csv
+work/mpas-bmatrix-global/bmatrix/samples/sample_00001.nc
+work/mpas-bmatrix-global/bmatrix/samples/sample_00002.nc
+...
+```
+
+Em seguida, calcule estatísticas por variável:
+
+```bash
+mpaswf bmatrix stats \
+  --variables u,w,rho,theta,qv,surface_pressure
+```
+
+O arquivo padrão é:
+
+```text
+work/mpas-bmatrix-global/bmatrix/stats/bmatrix_nmc_stats.nc
+```
+
+Para cada variável solicitada, o arquivo contém:
+
+```text
+<var>_mean
+<var>_rms
+<var>_stddev
+```
+
+Essa é a primeira camada estatística do workflow. A etapa seguinte será converter essas estatísticas e amostras para os formatos esperados pelo SABER/BUMP no MPAS-JEDI.
 
 ## Scripts legados
 
