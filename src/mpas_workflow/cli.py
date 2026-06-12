@@ -6,9 +6,10 @@ from pathlib import Path
 
 from .config import load_config
 from .wps import run_ungrib, ungrib_run_dir
-from .mpas_init import prepare_init, submit_init, validate_init, init_file
+from .mpas_init import prepare_init, submit_init, validate_init
 from .forecast import prepare_forecast, submit_forecast, restart_file
 from .nmc import prepare_pair, validate_pair, diff_pair, parse_variables_arg
+from .shell import wait_for_pbs_job
 
 
 DEFAULT_CONFIG = "configs/jaci-x1.10242.yaml"
@@ -43,7 +44,7 @@ def nmc_times_from_valid_time(valid_time: str):
     return format_time(old_init_time), format_time(new_init_time), valid_time
 
 
-def ensure_init_ready(cfg, init_time: str, submit: bool = False) -> bool:
+def ensure_init_ready(cfg, init_time: str, submit: bool = False, wait: bool = False, poll_seconds: int = 30) -> bool:
     try:
         validate_init(cfg, init_time)
         return True
@@ -54,15 +55,28 @@ def ensure_init_ready(cfg, init_time: str, submit: bool = False) -> bool:
     prepare_init(cfg, init_time, ungrib_run_dir(cfg, init_time) / f"FILE:{init_time[:13]}")
 
     if submit:
-        submit_init(cfg, init_time)
-        print("Job de init submetido. Rode o mesmo comando novamente após terminar.")
+        jobid = submit_init(cfg, init_time)
+        print(f"Job de init submetido: {jobid}")
+        if wait:
+            wait_for_pbs_job(jobid, poll_seconds=poll_seconds)
+            validate_init(cfg, init_time)
+            return True
+        print("Job de init submetido. Use --wait para continuar automaticamente após terminar.")
     else:
         print("Init preparado. Use --submit para submeter automaticamente.")
 
     return False
 
 
-def ensure_forecast_ready(cfg, init_time: str, lead_hours: int, dt: int, submit: bool = False) -> bool:
+def ensure_forecast_ready(
+    cfg,
+    init_time: str,
+    lead_hours: int,
+    dt: int,
+    submit: bool = False,
+    wait: bool = False,
+    poll_seconds: int = 30,
+) -> bool:
     rf = restart_file(cfg, init_time, lead_hours, dt)
     if rf.exists():
         print(f"OK: forecast f{lead_hours:03d} existente: {rf}")
@@ -71,23 +85,41 @@ def ensure_forecast_ready(cfg, init_time: str, lead_hours: int, dt: int, submit:
     prepare_forecast(cfg, init_time, lead_hours, dt)
 
     if submit:
-        submit_forecast(cfg, init_time, lead_hours, dt)
-        print("Job de forecast submetido. Rode o mesmo comando novamente após terminar.")
+        jobid = submit_forecast(cfg, init_time, lead_hours, dt)
+        print(f"Job de forecast f{lead_hours:03d} submetido: {jobid}")
+        if wait:
+            wait_for_pbs_job(jobid, poll_seconds=poll_seconds)
+            if rf.exists():
+                print(f"OK: forecast f{lead_hours:03d} concluído: {rf}")
+                return True
+            raise SystemExit(f"ERRO: forecast terminou, mas restart esperado não existe: {rf}")
+        print("Job de forecast submetido. Use --wait para continuar automaticamente após terminar.")
     else:
         print("Forecast preparado. Use --submit para submeter automaticamente.")
 
     return False
 
 
-def run_one_pair(cfg, old_init_time: str, new_init_time: str, valid_time: str, dt: int, submit: bool, make_diff: bool, variables):
+def run_one_pair(
+    cfg,
+    old_init_time: str,
+    new_init_time: str,
+    valid_time: str,
+    dt: int,
+    submit: bool,
+    wait: bool,
+    poll_seconds: int,
+    make_diff: bool,
+    variables,
+):
     for init_time in [old_init_time, new_init_time]:
-        if not ensure_init_ready(cfg, init_time, submit=submit):
+        if not ensure_init_ready(cfg, init_time, submit=submit, wait=wait, poll_seconds=poll_seconds):
             return False
 
-    if not ensure_forecast_ready(cfg, old_init_time, 48, dt, submit=submit):
+    if not ensure_forecast_ready(cfg, old_init_time, 48, dt, submit=submit, wait=wait, poll_seconds=poll_seconds):
         return False
 
-    if not ensure_forecast_ready(cfg, new_init_time, 24, dt, submit=submit):
+    if not ensure_forecast_ready(cfg, new_init_time, 24, dt, submit=submit, wait=wait, poll_seconds=poll_seconds):
         return False
 
     prepare_pair(cfg, old_init_time, new_init_time, valid_time, dt)
@@ -131,6 +163,8 @@ def parser():
     cr.add_argument("--lead-hours", type=int, required=True)
     cr.add_argument("--dt", type=int)
     cr.add_argument("--submit", action="store_true")
+    cr.add_argument("--wait", action="store_true")
+    cr.add_argument("--poll-seconds", type=int, default=30)
 
     fc = sub.add_parser("forecast")
     fc_sub = fc.add_subparsers(dest="forecast_cmd", required=True)
@@ -170,6 +204,8 @@ def parser():
     one.add_argument("--valid-time", required=True)
     one.add_argument("--dt", type=int)
     one.add_argument("--submit", action="store_true")
+    one.add_argument("--wait", action="store_true")
+    one.add_argument("--poll-seconds", type=int, default=30)
     one.add_argument("--diff", action="store_true")
     one.add_argument("--variables")
 
@@ -179,6 +215,8 @@ def parser():
     rng.add_argument("--valid-interval-hours", type=int, default=24)
     rng.add_argument("--dt", type=int)
     rng.add_argument("--submit", action="store_true")
+    rng.add_argument("--wait", action="store_true")
+    rng.add_argument("--poll-seconds", type=int, default=30)
     rng.add_argument("--diff", action="store_true")
     rng.add_argument("--variables")
 
@@ -208,9 +246,23 @@ def main(argv=None):
     if args.cmd == "cycle":
         if args.cycle_cmd == "run":
             dt = int(args.dt or cfg["runtime"]["config_dt"])
-            if not ensure_init_ready(cfg, args.init_time, submit=args.submit):
+            if not ensure_init_ready(
+                cfg,
+                args.init_time,
+                submit=args.submit,
+                wait=args.wait,
+                poll_seconds=args.poll_seconds,
+            ):
                 return
-            if not ensure_forecast_ready(cfg, args.init_time, args.lead_hours, dt, submit=args.submit):
+            if not ensure_forecast_ready(
+                cfg,
+                args.init_time,
+                args.lead_hours,
+                dt,
+                submit=args.submit,
+                wait=args.wait,
+                poll_seconds=args.poll_seconds,
+            ):
                 return
             print(f"SUCCESS: ciclo completo para {args.init_time} f{args.lead_hours:03d}.")
         return
@@ -243,6 +295,8 @@ def main(argv=None):
                 valid_time=args.valid_time,
                 dt=dt,
                 submit=args.submit,
+                wait=args.wait,
+                poll_seconds=args.poll_seconds,
                 make_diff=args.diff,
                 variables=parse_variables_arg(args.variables),
             )
@@ -266,10 +320,12 @@ def main(argv=None):
                     valid_time=valid_time,
                     dt=dt,
                     submit=args.submit,
+                    wait=args.wait,
+                    poll_seconds=args.poll_seconds,
                     make_diff=args.diff,
                     variables=variables,
                 )
                 if not done:
-                    print("Par ainda não concluído. Rode o mesmo comando novamente após o PBS terminar.")
+                    print("Par ainda não concluído. Use --wait para continuar automaticamente após PBS terminar.")
                     break
         return
