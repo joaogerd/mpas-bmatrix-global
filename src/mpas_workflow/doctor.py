@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from pathlib import Path
-import shutil
+import argparse
 import os
+import shutil
 
-from .config import ymdh
+from .config import load_config
 from .wps import grib_path, ungrib_run_dir
 from .mpas_init import init_file
 from .forecast import restart_file
@@ -97,7 +98,7 @@ def doctor_config(config) -> bool:
             _fail(f"seção ausente no YAML: {section}")
             ok = False
         else:
-            _ok(f"seção YAML", section)
+            _ok("seção YAML", section)
 
     if not ok:
         return False
@@ -176,3 +177,29 @@ def doctor_nmc_range(config, start_valid_time: str, end_valid_time: str, interva
 
     print("Doctor NMC concluído. Arquivos 'missing' podem ser produzidos pelo workflow; requisitos estáticos devem estar OK antes de submeter PBS.")
     return True
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="python -m mpas_workflow.doctor")
+    parser.add_argument("--config", default="configs/jaci-x1.10242.yaml")
+    parser.add_argument("--start-valid-time")
+    parser.add_argument("--end-valid-time")
+    parser.add_argument("--valid-interval-hours", type=int, default=24)
+    parser.add_argument("--dt", type=int)
+    args = parser.parse_args(argv)
+
+    cfg = load_config(args.config)
+    ok = doctor_config(cfg)
+
+    if args.start_valid_time or args.end_valid_time:
+        if not args.start_valid_time or not args.end_valid_time:
+            raise SystemExit("ERRO: use --start-valid-time e --end-valid-time juntos.")
+        dt = int(args.dt or cfg["runtime"]["config_dt"])
+        doctor_nmc_range(cfg, args.start_valid_time, args.end_valid_time, args.valid_interval_hours, dt)
+
+    if not ok:
+        raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()
