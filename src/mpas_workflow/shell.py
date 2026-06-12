@@ -37,20 +37,37 @@ def require_file(path, label=None):
 
 def qsub(pbs_file, cwd):
     cmd = ["qsub", str(pbs_file)]
+    cwd = Path(cwd)
     print("+", " ".join(map(str, cmd)), flush=True)
     proc = subprocess.run(
         cmd,
         cwd=cwd,
-        check=True,
+        check=False,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    if proc.stderr.strip():
-        print(proc.stderr.strip(), flush=True)
+
     out = proc.stdout.strip()
+    err = proc.stderr.strip()
+
     if out:
         print(out, flush=True)
+    if err:
+        print(err, flush=True)
+
+    if proc.returncode != 0:
+        msg = [
+            f"ERRO: qsub falhou com código {proc.returncode}",
+            f"cwd={cwd}",
+            f"pbs_file={pbs_file}",
+        ]
+        if out:
+            msg.append(f"STDOUT:\n{out}")
+        if err:
+            msg.append(f"STDERR:\n{err}")
+        raise SystemExit("\n".join(msg))
+
     return out.split()[0] if out else ""
 
 
