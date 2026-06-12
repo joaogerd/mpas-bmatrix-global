@@ -10,6 +10,26 @@ from .pbs import mpas_forecast_pbs
 from .shell import require_file, symlink_force, write_text, qsub
 
 
+BFLOW_STREAM_VARIABLES = [
+    # Variables required by the official MPAS-JEDI Bflow preprocessing scripts.
+    "uReconstructZonal",
+    "uReconstructMeridional",
+    "theta",
+    "pressure",
+    "pressure_p",
+    "pressure_base",
+    "qv",
+    "surface_pressure",
+    "relhum",
+    # Optional hydrometeors used by the tutorial when hydrometeor statistics are enabled.
+    "qc",
+    "qr",
+    "qi",
+    "qs",
+    "qg",
+]
+
+
 def parse_time(t):
     return datetime.strptime(t, "%Y-%m-%d_%H:%M:%S")
 
@@ -26,6 +46,11 @@ def forecast_run_dir(config, init_time, lead_hours, dt):
 def restart_file(config, init_time, lead_hours, dt):
     valid = parse_time(init_time) + timedelta(hours=lead_hours)
     return forecast_run_dir(config, init_time, lead_hours, dt) / f"restart.{fmt_file_time(valid)}.nc"
+
+
+def bflow_file(config, init_time, lead_hours, dt):
+    valid = parse_time(init_time) + timedelta(hours=lead_hours)
+    return forecast_run_dir(config, init_time, lead_hours, dt) / f"bflow.{fmt_file_time(valid)}.nc"
 
 
 def patch_namelist(text, replacements):
@@ -56,12 +81,20 @@ def clean_forecast_run_dir(run_dir: Path):
         "restart.*.nc",
         "history.*.nc",
         "diagnostics.*.nc",
+        "bflow.*.nc",
         "restart_timestamp",
     ]
     for pattern in patterns:
         for path in run_dir.glob(pattern):
             if path.exists() or path.is_symlink():
                 path.unlink()
+
+
+def _write_bflow_stream_list(run_dir: Path):
+    write_text(
+        run_dir / "stream_list.atmosphere.bflow",
+        "\n".join(BFLOW_STREAM_VARIABLES) + "\n",
+    )
 
 
 def validate_forecast_setup(config, init_time, lead_hours, dt, output_interval):
@@ -71,6 +104,7 @@ def validate_forecast_setup(config, init_time, lead_hours, dt, output_interval):
     nproc = int(mesh["nproc"])
     partition = Path(mesh["partitions_dir"]) / f"{graph.name}.part.{nproc}"
     expected_restart = restart_file(config, init_time, lead_hours, dt)
+    expected_bflow = bflow_file(config, init_time, lead_hours, dt)
 
     checks = [
         (run_dir / "mpas_atmosphere", "run-local mpas_atmosphere"),
@@ -81,6 +115,7 @@ def validate_forecast_setup(config, init_time, lead_hours, dt, output_interval):
         (run_dir / partition.name, "run-local graph partition link"),
         (run_dir / "namelist.atmosphere", "namelist.atmosphere"),
         (run_dir / "streams.atmosphere", "streams.atmosphere"),
+        (run_dir / "stream_list.atmosphere.bflow", "stream_list.atmosphere.bflow"),
         (run_dir / "run_mpas_forecast.pbs", "run_mpas_forecast.pbs"),
     ]
     for path, label in checks:
@@ -88,6 +123,7 @@ def validate_forecast_setup(config, init_time, lead_hours, dt, output_interval):
 
     namelist = (run_dir / "namelist.atmosphere").read_text(errors="replace")
     streams = (run_dir / "streams.atmosphere").read_text(errors="replace")
+    bflow_stream_list = (run_dir / "stream_list.atmosphere.bflow").read_text(errors="replace")
     pbs_text = (run_dir / "run_mpas_forecast.pbs").read_text(errors="replace")
 
     run_duration = f"{lead_hours // 24}_{lead_hours % 24:02d}:00:00"
@@ -106,12 +142,20 @@ def validate_forecast_setup(config, init_time, lead_hours, dt, output_interval):
         f'{mesh["name"]}.invariant.nc',
         "init.nc",
         "restart.$Y-$M-$D_$h.$m.$s.nc",
+        "bflow.$Y-$M-$D_$h.$m.$s.nc",
+        "stream_list.atmosphere.bflow",
         f'output_interval="{output_interval}"',
         'clobber_mode="overwrite"',
     ]
     for token in required_stream_tokens:
         if token not in streams:
             raise SystemExit(f"ERRO: streams.atmosphere não contém configuração esperada: {token}")
+
+    for variable in BFLOW_STREAM_VARIABLES:
+        if variable not in bflow_stream_list.split():
+            raise SystemExit(
+                f"ERRO: stream_list.atmosphere.bflow não contém variável esperada: {variable}"
+            )
 
     if "#PBS -l walltime=" not in pbs_text:
         raise SystemExit("ERRO: PBS de forecast não contém diretiva walltime.")
@@ -120,6 +164,8 @@ def validate_forecast_setup(config, init_time, lead_hours, dt, output_interval):
     print(f"  RUN_DIR={run_dir}")
     print(f"  INIT_INPUT={run_dir / 'init.nc'}")
     print(f"  EXPECTED_RESTART={expected_restart}")
+    print(f"  EXPECTED_BFLOW={expected_bflow}")
+    print("  BFLOW_VARIABLES=" + ",".join(BFLOW_STREAM_VARIABLES))
     for line in pbs_text.splitlines():
         if line.startswith("#PBS -q") or line.startswith("#PBS -l walltime") or line.startswith("#PBS -l select"):
             print(f"  PBS={line}")
@@ -214,14 +260,24 @@ def prepare_forecast(config, init_time, lead_hours, dt=None, output_interval=Non
         clobber_mode="overwrite"
         contents="stream_list.atmosphere.diagnostics" />
 
+<stream name="bflow"
+        type="output"
+        filename_template="bflow.$Y-$M-$D_$h.$m.$s.nc"
+        filename_interval="output_interval"
+        output_interval="{output_interval}"
+        clobber_mode="overwrite"
+        contents="stream_list.atmosphere.bflow" />
+
 </streams>
 '''
     write_text(run_dir / "streams.atmosphere", streams)
+    _write_bflow_stream_list(run_dir)
     write_text(run_dir / "run_mpas_forecast.pbs", mpas_forecast_pbs(config, run_dir, nproc, lead_hours=lead_hours))
     validate_forecast_setup(config, init_time, lead_hours, dt, output_interval)
 
     print(f"OK: forecast f{lead_hours:03d} preparado: {run_dir}")
-    print(f"Arquivo esperado: {restart_file(config, init_time, lead_hours, dt)}")
+    print(f"Arquivo restart esperado: {restart_file(config, init_time, lead_hours, dt)}")
+    print(f"Arquivo Bflow esperado: {bflow_file(config, init_time, lead_hours, dt)}")
     return run_dir
 
 
