@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
+
 from .config import date_part, cycle_part, ymdh
-from .shell import require_file, run, symlink_force
+from .shell import require_file, run, symlink_force, write_text
 
 
 def grib_path(config, init_time, fhour="000"):
@@ -15,6 +17,49 @@ def grib_path(config, init_time, fhour="000"):
 def ungrib_run_dir(config, init_time, fhour="000"):
     work_root = Path(config["project"]["work_root"])
     return work_root / "wps_ungrib" / f"gfs.{ymdh(init_time)}.f{fhour}"
+
+
+def _write_namelist_wps(path: Path, init_time: str, fhour: str = "000"):
+    start = datetime.strptime(init_time, "%Y-%m-%d_%H:%M:%S") + timedelta(hours=int(fhour))
+    end = start
+
+    content = f"""&share
+ wrf_core = 'ARW',
+ max_dom = 1,
+ start_date = '{start:%Y-%m-%d_%H}:00:00',
+ end_date   = '{end:%Y-%m-%d_%H}:00:00',
+ interval_seconds = 21600,
+ io_form_geogrid = 2,
+ /
+
+&ungrib
+ out_format = 'WPS',
+ prefix = 'FILE',
+ /
+
+&metgrid
+ fg_name = 'FILE',
+ io_form_metgrid = 2,
+ /
+"""
+    write_text(path, content)
+    return path
+
+
+def _clean_ungrib_run_dir(run_dir: Path):
+    patterns = [
+        "GRIBFILE.*",
+        "FILE:*",
+        "PFILE:*",
+        "Vtable",
+        "namelist.wps",
+        "ungrib.exe",
+        "link_grib.csh",
+    ]
+    for pattern in patterns:
+        for path in run_dir.glob(pattern):
+            if path.exists() or path.is_symlink():
+                path.unlink()
 
 
 def run_ungrib(config, init_time, fhour="000", download=True):
@@ -40,12 +85,16 @@ def run_ungrib(config, init_time, fhour="000", download=True):
         run(["curl", "-fL", "-o", str(grib), url])
 
     require_file(grib, "GFS GRIB2")
-    symlink_force(wps["vtable_gfs"], run_dir / "Vtable")
-    run([wps["link_grib"], str(grib)], cwd=run_dir)
-    run([wps["ungrib_exe"]], cwd=run_dir)
 
-    expected = run_dir / f"FILE:{init_time[:13].replace(':', '')}"
-    # WPS usa FILE:YYYY-MM-DD_HH
+    _clean_ungrib_run_dir(run_dir)
+    symlink_force(wps["vtable_gfs"], run_dir / "Vtable")
+    symlink_force(wps["ungrib_exe"], run_dir / "ungrib.exe")
+    symlink_force(wps["link_grib"], run_dir / "link_grib.csh")
+    _write_namelist_wps(run_dir / "namelist.wps", init_time, fhour)
+
+    run(["./link_grib.csh", str(grib)], cwd=run_dir)
+    run(["./ungrib.exe"], cwd=run_dir)
+
     expected = run_dir / f"FILE:{init_time[:13]}"
     require_file(expected, "WPS FILE")
     print(f"OK: ungrib gerou {expected}")
