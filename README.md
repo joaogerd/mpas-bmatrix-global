@@ -22,6 +22,14 @@ Configuração padrão JACI:
 configs/jaci-x1.10242.yaml
 ```
 
+## Documentação JACI
+
+Resumo operacional da infraestrutura JACI, filas PBS, tempos máximos, tipos de nós, filesystems e boas práticas:
+
+```text
+docs/jaci-operational-guide.md
+```
+
 ## Exemplo rápido
 
 ```bash
@@ -34,4 +42,3 @@ scripts/mpaswf nmc one-pair \
   --dt 60 \
   --submit
 ```
-
