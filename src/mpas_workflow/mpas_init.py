@@ -78,7 +78,7 @@ def prepare_init(config, init_time, wps_file):
 def submit_init(config, init_time):
     run_dir = init_run_dir(config, init_time)
     require_file(run_dir / "run_mpas_init.pbs", "PBS de init")
-    qsub("run_mpas_init.pbs", run_dir)
+    return qsub("run_mpas_init.pbs", run_dir)
 
 
 def validate_init(config, init_time):
