@@ -6,7 +6,7 @@ import time
 
 
 def run(cmd, cwd=None, check=True):
-    print("+", " ".join(map(str, cmd)))
+    print("+", " ".join(map(str, cmd)), flush=True)
     return subprocess.run(cmd, cwd=cwd, check=check)
 
 
@@ -37,7 +37,7 @@ def require_file(path, label=None):
 
 def qsub(pbs_file, cwd):
     cmd = ["qsub", str(pbs_file)]
-    print("+", " ".join(map(str, cmd)))
+    print("+", " ".join(map(str, cmd)), flush=True)
     proc = subprocess.run(
         cmd,
         cwd=cwd,
@@ -47,23 +47,44 @@ def qsub(pbs_file, cwd):
         stderr=subprocess.PIPE,
     )
     if proc.stderr.strip():
-        print(proc.stderr.strip())
+        print(proc.stderr.strip(), flush=True)
     out = proc.stdout.strip()
     if out:
-        print(out)
+        print(out, flush=True)
     return out.split()[0] if out else ""
 
 
-def pbs_job_exists(jobid: str) -> bool:
+def pbs_job_status(jobid: str) -> str | None:
     if not jobid:
-        return False
+        return None
     proc = subprocess.run(
         ["qstat", jobid],
-        stdout=subprocess.DEVNULL,
+        text=True,
+        stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         check=False,
     )
-    return proc.returncode == 0
+    if proc.returncode != 0:
+        return None
+
+    lines = [line for line in proc.stdout.splitlines() if line.strip()]
+    if len(lines) >= 3:
+        return lines[-1].strip()
+    return proc.stdout.strip() or None
+
+
+def pbs_job_exists(jobid: str) -> bool:
+    return pbs_job_status(jobid) is not None
+
+
+def _format_elapsed(seconds: float) -> str:
+    seconds = int(seconds)
+    h = seconds // 3600
+    m = (seconds % 3600) // 60
+    s = seconds % 60
+    if h:
+        return f"{h:02d}:{m:02d}:{s:02d}"
+    return f"{m:02d}:{s:02d}"
 
 
 def wait_for_pbs_job(jobid: str, poll_seconds: int = 30):
@@ -71,9 +92,17 @@ def wait_for_pbs_job(jobid: str, poll_seconds: int = 30):
         raise SystemExit("ERRO: jobid vazio; não é possível monitorar o PBS.")
 
     poll_seconds = max(1, int(poll_seconds))
-    print(f"Aguardando job PBS terminar: {jobid}")
+    start = time.monotonic()
+    print(f"Aguardando job PBS terminar: {jobid}", flush=True)
 
-    while pbs_job_exists(jobid):
+    while True:
+        status = pbs_job_status(jobid)
+        if status is None:
+            break
+
+        elapsed = _format_elapsed(time.monotonic() - start)
+        print(f"Ainda aguardando PBS job {jobid} | elapsed={elapsed} | {status}", flush=True)
         time.sleep(poll_seconds)
 
-    print(f"Job PBS saiu do qstat: {jobid}")
+    elapsed = _format_elapsed(time.monotonic() - start)
+    print(f"Job PBS saiu do qstat: {jobid} | elapsed={elapsed}", flush=True)
