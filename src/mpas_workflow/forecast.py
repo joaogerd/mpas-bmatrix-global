@@ -132,6 +132,7 @@ def validate_forecast_setup(config, init_time, lead_hours, dt, output_interval):
         f"config_start_time = '{init_time}'",
         f"config_run_duration = '{run_duration}'",
         "config_do_restart = .false.",
+        "config_do_DAcycling = .true.",
         f"config_block_decomp_file_prefix = '{graph.name}.part.'",
     ]
     for token in required_namelist_tokens:
@@ -221,7 +222,7 @@ def prepare_forecast(config, init_time, lead_hours, dt=None, output_interval=Non
         "config_sst_update": ".false.",
         "config_sstdiurn_update": ".false.",
         "config_deepsoiltemp_update": ".false.",
-        "config_do_DAcycling": ".false.",
+        "config_do_DAcycling": ".true.",
     })
     write_text(run_dir / "namelist.atmosphere", namelist)
 
