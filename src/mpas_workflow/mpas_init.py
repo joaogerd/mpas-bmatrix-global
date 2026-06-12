@@ -5,7 +5,7 @@ import re
 
 from .config import safe_time
 from .pbs import mpas_init_pbs
-from .shell import require_file, symlink_force, write_text, qsub
+from .shell import symlink_force, write_text, qsub
 
 
 def init_run_dir(config, init_time):
@@ -17,12 +17,56 @@ def init_file(config, init_time):
     return init_run_dir(config, init_time) / f"{config['mesh']['name']}.init.{s}.nc"
 
 
+def require_file(path, label=None):
+    path = Path(path)
+    if not path.exists():
+        msg = f"ERRO: arquivo obrigatório não encontrado: {path}"
+        if label:
+            msg = f"ERRO: {label} não encontrado: {path}"
+        raise SystemExit(msg)
+    return path
+
+
 def patch_namelist(text, replacements):
     for key, value in replacements.items():
         pattern = rf"{key}\s*=\s*[^,\n]*"
         repl = f"{key} = {value}"
         text = re.sub(pattern, repl, text)
     return text
+
+
+def _tail(path: Path, n: int = 80) -> str:
+    if not path.exists():
+        return f"{path} não existe"
+    lines = path.read_text(errors="replace").splitlines()
+    return "\n".join(lines[-n:])
+
+
+def print_init_diagnostics(config, init_time, jobid: str | None = None):
+    run_dir = init_run_dir(config, init_time)
+    print("\n=== MPAS init diagnostics ===")
+    print(f"RUN_DIR={run_dir}")
+    print(f"EXPECTED_INIT={init_file(config, init_time)}")
+
+    candidates = [
+        run_dir / "stderr.log",
+        run_dir / "stdout.log",
+        run_dir / "log.init_atmosphere.0000.out",
+        run_dir / "log.init_atmosphere.0000.err",
+    ]
+
+    if jobid:
+        candidates.extend(sorted(run_dir.glob(f"*.o{jobid.split('.')[0]}")))
+
+    candidates.extend(sorted(run_dir.glob("mpas_init_x1.10242.o*"))[-3:])
+
+    seen = set()
+    for path in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
+        print(f"\n--- tail {path.name} ---")
+        print(_tail(path))
 
 
 def prepare_init(config, init_time, wps_file):
@@ -81,12 +125,19 @@ def submit_init(config, init_time):
     return qsub("run_mpas_init.pbs", run_dir)
 
 
-def validate_init(config, init_time):
+def validate_init(config, init_time, jobid: str | None = None):
     f = init_file(config, init_time)
-    require_file(f, "init.nc")
+    if not f.exists():
+        print_init_diagnostics(config, init_time, jobid=jobid)
+        raise SystemExit(f"ERRO: init.nc não encontrado: {f}")
+
     log = init_run_dir(config, init_time) / "log.init_atmosphere.0000.out"
-    require_file(log, "log.init_atmosphere.0000.out")
+    if not log.exists():
+        print_init_diagnostics(config, init_time, jobid=jobid)
+        raise SystemExit(f"ERRO: log.init_atmosphere.0000.out não encontrado: {log}")
+
     txt = log.read_text(errors="replace")
     if "Critical error messages =            0" not in txt:
+        print_init_diagnostics(config, init_time, jobid=jobid)
         raise SystemExit(f"ERRO: init não terminou limpo. Veja {log}")
     print(f"OK: init validado: {f}")
