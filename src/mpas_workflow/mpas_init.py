@@ -9,7 +9,8 @@ from .shell import symlink_force, write_text, qsub
 
 
 def init_run_dir(config, init_time):
-    return Path(config["project"]["work_root"]) / "mpas_init" / config["mesh"]["name"] / f"{init_time}_invariant_np64"
+    nproc = int(config["mesh"].get("nproc", 64))
+    return Path(config["project"]["work_root"]) / "mpas_init" / config["mesh"]["name"] / f"{init_time}_invariant_np{nproc}"
 
 
 def init_file(config, init_time):
