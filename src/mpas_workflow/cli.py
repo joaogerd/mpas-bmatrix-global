@@ -59,7 +59,7 @@ def ensure_init_ready(cfg, init_time: str, submit: bool = False, wait: bool = Fa
         print(f"Job de init submetido: {jobid}")
         if wait:
             wait_for_pbs_job(jobid, poll_seconds=poll_seconds)
-            validate_init(cfg, init_time)
+            validate_init(cfg, init_time, jobid=jobid)
             return True
         print("Job de init submetido. Use --wait para continuar automaticamente após terminar.")
     else:
