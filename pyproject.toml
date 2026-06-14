@@ -31,6 +31,7 @@ dev = [
 mpaswf = "mpas_workflow.cli:main"
 mpasbm = "mpas_workflow.bmatrix:main"
 mpasbflow = "mpas_workflow.bflow:main"
+mpasbcov = "mpas_workflow.bcov:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

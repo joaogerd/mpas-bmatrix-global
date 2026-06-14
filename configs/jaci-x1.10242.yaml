@@ -25,6 +25,8 @@ mesh:
 static:
   invariant: /p/projetos/monan_das/joao.gerd/external-inputs/mpasjedi_tutorial202509NCAR/MPAS_namelist_stream_physics_files/x1.10242.invariant.nc
   tutorial_physics_files: /p/projetos/monan_das/joao.gerd/external-inputs/mpasjedi_tutorial202509NCAR/MPAS_namelist_stream_physics_files
+  geovars: /p/projetos/monan_das/joao.gerd/projects/MONAN-JEDI/mpas-jedi/test/testinput/namelists/geovars.yaml
+  keptvars: /p/projetos/monan_das/joao.gerd/projects/MONAN-JEDI/mpas-jedi/test/testinput/namelists/keptvars.yaml
 
 wps:
   root: /p/projetos/monan_das/joao.gerd/data/mpas-bmatrix-global/external/WPS/WPS-4.6.0
@@ -36,6 +38,7 @@ pbs:
   queue: pesqmini
   queues:
     forecast: pesqmidi
+    bmatrix: pesqmidi
   nproc: 128
   walltime:
     init: "00:10:00"
@@ -43,6 +46,7 @@ pbs:
       f024: "01:00:00"
       f048: "02:00:00"
       default: "02:00:00"
+    bmatrix: "02:00:00"
   walltime_short: "00:10:00"
   walltime_long: "02:00:00"
 
