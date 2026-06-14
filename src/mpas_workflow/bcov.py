@@ -6,7 +6,7 @@ import re
 import shutil
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from .config import load_config
@@ -24,6 +24,25 @@ STATE_VARIABLES = [
 ]
 MIN_HDIAG_MEMBERS = 4
 NICAS_VARIABLES = STATE_VARIABLES
+SO_BACKGROUND_VARIABLES = [
+    "spechum",
+    "surface_pressure",
+    "temperature",
+    "uReconstructMeridional",
+    "uReconstructZonal",
+    "air_temperature",
+    "air_pressure",
+    "air_pressure_at_surface",
+    "eastward_wind",
+    "northward_wind",
+    "theta",
+    "rho",
+    "u",
+    "qv",
+    "pressure",
+    "pressure_p",
+]
+SO_VARIANTS = ("default", "t-only", "u-only")
 NICAS_DIRAC_POINTS = [
     (-45.0, 0.0),
     (-135.0, 0.0),
@@ -88,6 +107,10 @@ def hdiag_workspace(config, vbal_workspace_path: str | Path) -> Path:
 
 def nicas_workspace(config, hdiag_workspace_path: str | Path) -> Path:
     return covariance_root(config) / "nicas" / Path(hdiag_workspace_path).name
+
+
+def so_workspace(config, nicas_workspace_path: str | Path) -> Path:
+    return covariance_root(config) / "so" / Path(nicas_workspace_path).name
 
 
 def toolbox_exe(config) -> Path:
@@ -703,6 +726,104 @@ def link_nicas_support(hdiag_run: Path, run_dir: Path) -> None:
             symlink_force(source, run_dir / source.name)
 
 
+def link_so_support(hdiag_run: Path, run_dir: Path) -> Path:
+    link_nicas_support(hdiag_run, run_dir)
+    (run_dir / "bg.nc").unlink()
+    templates = sorted(hdiag_run.glob("templateFields.*.nc"))
+    if len(templates) != 1:
+        raise SystemExit(
+            "ERRO: esperado exatamente um templateFields.*.nc no workspace HDIAG"
+        )
+    return templates[0]
+
+
+def validate_so_background(path: Path) -> bool:
+    try:
+        import netCDF4
+    except ImportError as exc:
+        raise SystemExit("ERRO: so-prepare requer o módulo Python netCDF4.") from exc
+
+    with netCDF4.Dataset(path) as dataset:
+        missing = [name for name in SO_BACKGROUND_VARIABLES if name not in dataset.variables]
+    if missing:
+        raise SystemExit(
+            f"ERRO: background SO incompleto em {path}; variáveis ausentes: "
+            + ", ".join(missing)
+        )
+    return True
+
+
+def create_so_background(source: Path, output: Path) -> None:
+    try:
+        import netCDF4
+    except ImportError as exc:
+        raise SystemExit("ERRO: so-prepare requer o módulo Python netCDF4.") from exc
+
+    source = require_file(source.resolve(), "template MPAS completo")
+    output.unlink(missing_ok=True)
+    shutil.copy2(source, output)
+
+    with netCDF4.Dataset(output, "a") as dataset:
+        native = ["pressure_base", "pressure_p", "theta", "qv"]
+        missing = [name for name in native if name not in dataset.variables]
+        if missing:
+            raise SystemExit(
+                f"ERRO: template MPAS sem variáveis nativas para o SO: {', '.join(missing)}"
+            )
+
+        pressure_p = dataset.variables["pressure_p"]
+        pressure = dataset.variables["pressure_base"][:] + pressure_p[:]
+        theta = dataset.variables["theta"]
+        qv = dataset.variables["qv"]
+        derived = {
+            "pressure": (pressure_p, pressure, "pressure", "Pa"),
+            "air_pressure": (pressure_p, pressure, "air pressure", "Pa"),
+            "air_pressure_at_surface": (
+                dataset.variables["surface_pressure"],
+                dataset.variables["surface_pressure"][:],
+                "air pressure at surface",
+                "Pa",
+            ),
+            "temperature": (
+                theta,
+                theta[:] * (pressure / 100000.0) ** (2.0 / 7.0),
+                "temperature",
+                "K",
+            ),
+            "air_temperature": (
+                theta,
+                theta[:] * (pressure / 100000.0) ** (2.0 / 7.0),
+                "air temperature",
+                "K",
+            ),
+            "spechum": (
+                qv,
+                qv[:] / (1.0 + qv[:]),
+                "specific humidity",
+                "kg kg-1",
+            ),
+            "eastward_wind": (
+                dataset.variables["uReconstructZonal"],
+                dataset.variables["uReconstructZonal"][:],
+                "eastward wind",
+                "m s-1",
+            ),
+            "northward_wind": (
+                dataset.variables["uReconstructMeridional"],
+                dataset.variables["uReconstructMeridional"][:],
+                "northward wind",
+                "m s-1",
+            ),
+        }
+        for name, (template, values, long_name, units) in derived.items():
+            variable = dataset.createVariable(name, template.dtype, template.dimensions)
+            variable[:] = values.astype(template.dtype, copy=False)
+            variable.setncattr("long_name", long_name)
+            variable.setncattr("units", units)
+
+    validate_so_background(output)
+
+
 def write_nicas_yaml(
     path: Path,
     variable: str,
@@ -1097,6 +1218,524 @@ def validate_nicas(workspace: str | Path) -> bool:
     return True
 
 
+def workspace_from_readme(workspace: Path, label: str) -> Path | None:
+    readme = workspace / "README.md"
+    if not readme.is_file():
+        return None
+    match = re.search(rf"(?m)^{re.escape(label)}:\s*`([^`]+)`\s*$", readme.read_text())
+    return Path(match.group(1)) if match else None
+
+
+def variational_exe(config) -> Path:
+    path = Path(config["install"]["root"]) / "bin" / "mpasjedi_variational.x"
+    return require_file(path, "mpasjedi_variational.x")
+
+
+def so_artifacts(variant: str) -> dict[str, str]:
+    if variant not in SO_VARIANTS:
+        raise SystemExit(
+            f"ERRO: variante SO inválida: {variant}; use {', '.join(SO_VARIANTS)}."
+        )
+    suffix = "" if variant == "default" else f"_{variant.replace('-', '_')}"
+    return {
+        "yaml": f"run_SO{suffix}.yaml",
+        "pbs": f"qsub_so{suffix}.bash",
+        "runlog": f"run_SO{suffix}.runlog",
+        "stdout": f"stdout{suffix}.log",
+        "stderr": f"stderr{suffix}.log",
+    }
+
+
+def write_so_yaml(
+    path: Path,
+    date: str,
+    nicas_dir: Path,
+    stddev_file: Path,
+    vbal_dir: Path,
+    variant: str = "default",
+) -> None:
+    so_artifacts(variant)
+    analysis_date = datetime.strptime(date, "%Y-%m-%dT%H:%M:%SZ")
+    window_begin = (analysis_date - timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    epoch = analysis_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+    observers = []
+    if variant in ("default", "t-only"):
+        observers.append(
+            f"""    - obs space:
+        name: SO_T
+        simulated variables: [airTemperature]
+        obsdatain:
+          engine:
+            type: GenList
+            lats: [30.3061]
+            lons: [130.085]
+            vert coord type: pressure
+            vert coords: [78775.95]
+            dateTimes: [0]
+            epoch: "seconds since {epoch}"
+            obs errors: [0.8]
+            obs values: [284.5912]
+        obsdataout:
+          engine:
+            type: H5File
+            obsfile: ./obsout_SO_T.h5
+      obs operator:
+        name: VertInterp
+        vertical coordinate: air_pressure
+        interpolation method: log-linear"""
+        )
+    if variant in ("default", "u-only"):
+        observers.append(
+            f"""    - obs space:
+        name: SO_U
+        simulated variables: [windEastward]
+        obsdatain:
+          engine:
+            type: GenList
+            lats: [57.7699]
+            lons: [357.713]
+            vert coord type: pressure
+            vert coords: [77693.09]
+            dateTimes: [0]
+            epoch: "seconds since {epoch}"
+            obs errors: [1.0]
+            obs values: [0.7250047]
+        obsdataout:
+          engine:
+            type: H5File
+            obsfile: ./obsout_SO_U.h5
+      obs operator:
+        name: VertInterp
+        vertical coordinate: air_pressure
+        interpolation method: log-linear"""
+        )
+    text = f"""output:
+  filename: ./an.$Y-$M-$D_$h.$m.$s.nc
+  stream name: analysis
+
+variational:
+  minimizer:
+    algorithm: DRPCG
+  iterations:
+  - geometry:
+      nml_file: "./namelist.atmosphere_240km"
+      streams_file: "./streams.atmosphere_240km"
+    gradient norm reduction: 1e-3
+    diagnostics:
+      departures: ombg
+    ninner: 10
+
+final:
+  diagnostics:
+    departures: oman
+
+cost function:
+  cost type: 3D-Var
+  time window:
+    begin: '{window_begin}'
+    length: PT6H
+  jb evaluation: false
+  geometry:
+    nml_file: "./namelist.atmosphere_240km"
+    streams_file: "./streams.atmosphere_240km"
+    deallocate non-da fields: true
+  analysis variables: &incvars
+  - spechum
+  - surface_pressure
+  - temperature
+  - uReconstructMeridional
+  - uReconstructZonal
+  background:
+    state variables:
+    - spechum
+    - surface_pressure
+    - temperature
+    - uReconstructMeridional
+    - uReconstructZonal
+    - air_temperature
+    - air_pressure
+    - air_pressure_at_surface
+    - eastward_wind
+    - northward_wind
+    - theta
+    - rho
+    - u
+    - qv
+    - pressure
+    - pressure_p
+    filename: ./bg_so.nc
+    date: &analysisDate '{date}'
+    transform model to analysis: false
+  background error:
+    covariance model: SABER
+    saber central block:
+      saber block name: BUMP_NICAS
+      active variables: &ctlvars
+      - stream_function
+      - velocity_potential
+      - temperature
+      - spechum
+      - surface_pressure
+      read:
+        io:
+          data directory: {nicas_dir}
+          files prefix: mpas
+        drivers:
+          multivariate strategy: univariate
+          read local nicas: true
+        grids:
+        - model:
+            variables:
+            - stream_function
+            - velocity_potential
+            - temperature
+            - spechum
+        - model:
+            variables:
+            - surface_pressure
+    saber outer blocks:
+    - saber block name: StdDev
+      read:
+        model file:
+          filename: {stddev_file}
+          date: *analysisDate
+          stream name: control
+    - saber block name: BUMP_VerticalBalance
+      read:
+        io:
+          data directory: {vbal_dir}
+          files prefix: mpas
+        drivers:
+          read local sampling: true
+          read vertical balance: true
+        vertical balance:
+          vbal:
+          - balanced variable: velocity_potential
+            unbalanced variable: stream_function
+            diagonal regression: true
+          - balanced variable: temperature
+            unbalanced variable: stream_function
+          - balanced variable: surface_pressure
+            unbalanced variable: stream_function
+    linear variable change:
+      linear variable change name: Control2Analysis
+      input variables: *ctlvars
+      output variables: *incvars
+
+  observations:
+    observers:
+{chr(10).join(observers)}
+"""
+    write_text(path, text)
+
+
+def write_so_pbs(
+    config,
+    run_dir: Path,
+    variant: str = "default",
+) -> None:
+    artifacts = so_artifacts(variant)
+    nproc = int(config["mesh"].get("nproc", config["pbs"].get("nproc", 64)))
+    queue = config["pbs"].get("queues", {}).get("bmatrix", config["pbs"].get("queue", "pesqmini"))
+    walltime = config["pbs"].get("walltime", {}).get("bmatrix", config["pbs"].get("walltime_short", "00:10:00"))
+    project_root = config["project"]["project_root"]
+    loader = config["environment"]["loader"]
+    exe = variational_exe(config)
+    text = f"""#!/bin/bash
+#PBS -N SOTest
+#PBS -q {queue}
+#PBS -l select=1:ncpus={nproc}:mpiprocs={nproc}
+#PBS -l walltime={walltime}
+#PBS -j oe
+
+set -euo pipefail
+source "{project_root}/{loader}"
+cd "{run_dir}"
+export OMP_NUM_THREADS=1
+export GFORTRAN_CONVERT_UNIT=big_endian:101-200
+export FI_CXI_RX_MATCH_MODE=hybrid
+ulimit -s unlimited || true
+
+rm -f {artifacts['runlog']} {artifacts['stdout']} {artifacts['stderr']}
+mpiexec -n {nproc} {exe} ./{artifacts['yaml']} ./{artifacts['runlog']} > {artifacts['stdout']} 2> {artifacts['stderr']}
+"""
+    write_text(run_dir / artifacts["pbs"], text)
+
+
+def write_so_t_only_diagnostic_pbs(config, run_dir: Path) -> None:
+    nproc = int(config["mesh"].get("nproc", config["pbs"].get("nproc", 64)))
+    queue = config["pbs"].get("queues", {}).get(
+        "bmatrix", config["pbs"].get("queue", "pesqmini")
+    )
+    walltime = config["pbs"].get("walltime", {}).get(
+        "bmatrix", config["pbs"].get("walltime_short", "00:10:00")
+    )
+    project_root = config["project"]["project_root"]
+    loader = config["environment"]["loader"]
+    exe = variational_exe(config)
+    diagnostics = """echo "=== SO t-only diagnostic environment ==="
+date -u
+hostname
+pwd
+echo "--- ulimit -a ---"
+ulimit -a
+echo "--- kernel core pattern ---"
+cat /proc/sys/kernel/core_pattern 2>/dev/null || true
+echo "--- relevant environment ---"
+env | grep -E '^(CRAY|FI_|FORTRAN|GFORTRAN|LD_LIBRARY_PATH|LOADEDMODULES|MPICH|OMP|PATH|PBS|PE_|PMI)' | sort || true
+echo "--- available launch/debug tools ---"
+for tool in gdb mpiexec mpirun aprun srun addr2line eu-stack; do
+  printf '%-12s' "$tool"
+  command -v "$tool" || true
+done
+echo "--- module list ---"
+module list 2>&1 || true
+"""
+    debug_text = f"""#!/bin/bash
+#PBS -N SO_T_debug
+#PBS -q {queue}
+#PBS -l select=1:ncpus={nproc}:mpiprocs={nproc}
+#PBS -l walltime={walltime}
+#PBS -j oe
+
+set -uo pipefail
+source "{project_root}/{loader}"
+cd "{run_dir}"
+export OMP_NUM_THREADS=1
+export GFORTRAN_CONVERT_UNIT=big_endian:101-200
+export GFORTRAN_ERROR_BACKTRACE=1
+export FI_CXI_RX_MATCH_MODE=hybrid
+ulimit -s unlimited || true
+ulimit -c unlimited || true
+
+rm -f run_SO_t_only_debug.runlog stdout_t_only_debug.log stderr_t_only_debug.log
+exec > >(tee -a stdout_t_only_debug.log) 2> >(tee -a stderr_t_only_debug.log >&2)
+{diagnostics}
+set +e
+mpiexec -n {nproc} {exe} ./run_SO_t_only.yaml ./run_SO_t_only_debug.runlog
+rc=$?
+set -e
+echo "mpiexec_rc=$rc"
+echo "--- core candidates in workspace/TMPDIR ---"
+find "$PWD" "${{TMPDIR:-/tmp}}" -maxdepth 2 -type f -name 'core*' -ls 2>/dev/null || true
+exit "$rc"
+"""
+    gdb_text = f"""#!/bin/bash
+#PBS -N SO_T_gdb1
+#PBS -q {queue}
+#PBS -l select=1:ncpus=1:mpiprocs=1
+#PBS -l walltime={walltime}
+#PBS -j oe
+
+set -uo pipefail
+source "{project_root}/{loader}"
+cd "{run_dir}"
+export OMP_NUM_THREADS=1
+export GFORTRAN_CONVERT_UNIT=big_endian:101-200
+export GFORTRAN_ERROR_BACKTRACE=1
+export FI_CXI_RX_MATCH_MODE=hybrid
+ulimit -s unlimited || true
+ulimit -c unlimited || true
+
+rm -f run_SO_t_only_gdb1.runlog stdout_t_only_gdb1.log stderr_t_only_gdb1.log
+exec > >(tee -a stdout_t_only_gdb1.log) 2> >(tee -a stderr_t_only_gdb1.log >&2)
+{diagnostics}
+if ! command -v gdb >/dev/null 2>&1; then
+  echo "ERRO: gdb nao esta disponivel no no de computacao."
+  exit 2
+fi
+set +e
+mpiexec -n 1 gdb --batch --quiet \
+  -ex "set pagination off" \
+  -ex "set confirm off" \
+  -ex "run" \
+  -ex "thread apply all bt full" \
+  -ex "info sharedlibrary" \
+  --args {exe} ./run_SO_t_only.yaml ./run_SO_t_only_gdb1.runlog
+rc=$?
+set -e
+echo "gdb_mpiexec_rc=$rc"
+exit "$rc"
+"""
+    write_text(run_dir / "qsub_so_t_only_debug.bash", debug_text)
+    write_text(run_dir / "qsub_so_t_only_gdb1.bash", gdb_text)
+
+
+def prepare_so(
+    config,
+    nicas_workspace_path: str | Path,
+    hdiag_workspace_path: str | Path | None = None,
+    vbal_workspace_path: str | Path | None = None,
+    workspace: str | Path | None = None,
+    clean: bool = False,
+    variant: str = "default",
+    debug_core: bool = False,
+) -> Path:
+    artifacts = so_artifacts(variant)
+    nicas_root = Path(nicas_workspace_path)
+    hdiag_root = (
+        Path(hdiag_workspace_path)
+        if hdiag_workspace_path
+        else workspace_from_readme(nicas_root, "HDIAG workspace")
+    )
+    if hdiag_root is None:
+        raise SystemExit("ERRO: informe --hdiag-workspace; metadata NICAS não contém o caminho.")
+    vbal_root = (
+        Path(vbal_workspace_path)
+        if vbal_workspace_path
+        else workspace_from_readme(hdiag_root, "VBAL workspace")
+    )
+    if vbal_root is None:
+        raise SystemExit("ERRO: informe --vbal-workspace; metadata HDIAG não contém o caminho.")
+
+    validate_nicas(nicas_root)
+    validate_hdiag(hdiag_root)
+    validate_vbal(vbal_root)
+    nicas_dir = nicas_root / "merge"
+    hdiag_run = hdiag_root / "HDIAG"
+    vbal_run = vbal_root / "VBAL"
+    require_file(nicas_dir / "mpas_nicas.nc", "NICAS global mesclado")
+    stddev = require_file(hdiag_run / "mpas.stddev.nc", "StdDev HDIAG")
+    require_file(vbal_run / "mpas_vbal.nc", "VBAL global")
+    require_file(vbal_run / "mpas_sampling.nc", "sampling VBAL global")
+
+    out = Path(workspace) if workspace else so_workspace(config, nicas_root)
+    if clean and out.exists():
+        shutil.rmtree(out)
+    out.mkdir(parents=True, exist_ok=True)
+    template = link_so_support(hdiag_run, out)
+    create_so_background(template, out / "bg_so.nc")
+    write_so_yaml(
+        out / artifacts["yaml"],
+        hdiag_date(hdiag_root),
+        nicas_dir,
+        stddev,
+        vbal_run,
+        variant=variant,
+    )
+    write_so_pbs(config, out, variant=variant)
+    if debug_core:
+        if variant != "t-only":
+            raise SystemExit(
+                "ERRO: --debug-core esta restrito a --variant t-only neste diagnostico."
+            )
+        write_so_t_only_diagnostic_pbs(config, out)
+    write_text(
+        out / "README.md",
+        "\n".join(
+            [
+                "# Single Observation workspace",
+                "",
+                f"NICAS workspace: `{nicas_root}`",
+                f"HDIAG workspace: `{hdiag_root}`",
+                f"VBAL workspace: `{vbal_root}`",
+                "",
+            ]
+        ),
+    )
+    print("=== SO workspace ===")
+    print(f"WORKSPACE={out}")
+    print(f"VARIANT={variant}")
+    print(f"YAML={out / artifacts['yaml']}")
+    print(f"PBS={out / artifacts['pbs']}")
+    return out
+
+
+def so_errors(run_dir: Path, variant: str = "default") -> list[str]:
+    artifacts = so_artifacts(variant)
+    runlog = run_dir / artifacts["runlog"]
+    text = runlog.read_text(errors="replace") if runlog.is_file() else ""
+    errors = []
+    if not re.search(r"Finishing .*Variational(?:<MPAS>)?.*status\s*=\s*0", text):
+        errors.append(f"status final de sucesso ausente no {artifacts['runlog']}")
+    if not list(run_dir.glob("an.*.nc")):
+        errors.append("arquivo de análise an.*.nc ausente")
+    expected_obs = {
+        "default": ["obsout_SO_T.h5", "obsout_SO_U.h5"],
+        "t-only": ["obsout_SO_T.h5"],
+        "u-only": ["obsout_SO_U.h5"],
+    }
+    for name in expected_obs[variant]:
+        if not (run_dir / name).is_file():
+            errors.append(f"produto SO ausente: {name}")
+    combined = "\n".join(
+        path.read_text(errors="replace")
+        for path in [
+            runlog,
+            run_dir / artifacts["stdout"],
+            run_dir / artifacts["stderr"],
+        ]
+        if path.is_file()
+    )
+    for token in ["ABORT", "FATAL", "ERROR:", "Exception", "Segmentation fault", "CRITICAL"]:
+        if token.lower() in combined.lower():
+            errors.append(f"erro encontrado nos logs: {token}")
+    return errors
+
+
+def validate_so(workspace: str | Path, variant: str = "default") -> bool:
+    root = Path(workspace)
+    errors = so_errors(root, variant=variant)
+    home_failures = nicas_home_failure_files(root)
+    print("=== SO validation ===")
+    print(f"WORKSPACE={root}")
+    print(f"VARIANT={variant}")
+    if home_failures and errors:
+        errors.insert(0, "falha PBS/HOME: Could not chdir to home directory")
+    elif home_failures:
+        print("WARNING: stale PBS output: Could not chdir to home directory")
+    if errors:
+        for error in errors:
+            print(f"  - {error}")
+        raise SystemExit("ERRO: SO falhou ou ficou incompleto.")
+    print("SUCCESS: SO validado.")
+    return True
+
+
+def clean_so_outputs(run_dir: Path, variant: str = "default") -> None:
+    artifacts = so_artifacts(variant)
+    for name in [
+        artifacts["runlog"],
+        artifacts["stdout"],
+        artifacts["stderr"],
+        "obsout_SO_T.h5",
+        "obsout_SO_U.h5",
+    ]:
+        (run_dir / name).unlink(missing_ok=True)
+    for path in run_dir.glob("an.*.nc"):
+        path.unlink()
+
+
+def submit_so(
+    workspace: str | Path,
+    wait: bool = False,
+    poll_seconds: int = 30,
+    retries: int = 2,
+    variant: str = "default",
+) -> str:
+    run_dir = Path(workspace)
+    artifacts = so_artifacts(variant)
+    retries = max(0, retries)
+    for attempt in range(retries + 1):
+        clean_so_outputs(run_dir, variant=variant)
+        for path in nicas_home_failure_files(run_dir):
+            path.unlink()
+        jobid = qsub(artifacts["pbs"], run_dir)
+        job_id_file = "job_id.txt" if variant == "default" else f"job_id_{variant.replace('-', '_')}.txt"
+        write_text(run_dir / job_id_file, jobid + "\n")
+        if not wait:
+            return jobid
+        wait_for_pbs_job(jobid, poll_seconds=poll_seconds)
+        if nicas_home_failure_files(run_dir):
+            if attempt < retries:
+                print("Falha PBS/HOME na JACI, ressubmetendo etapa SO.")
+                continue
+            raise SystemExit(f"ERRO: falha PBS/HOME persistiu no SO após {retries} retries.")
+        validate_so(run_dir, variant=variant)
+        return jobid
+    raise AssertionError("loop de retry SO terminou inesperadamente")
+
+
 def vbal_prepare_command(args) -> int:
     config = load_config(args.config)
     prepare_vbal(config, args.bflow_workspace, workspace=args.workspace, clean=args.clean)
@@ -1197,6 +1836,61 @@ def nicas_all_command(args) -> int:
     return 0
 
 
+def so_prepare_command(args) -> int:
+    config = load_config(args.config)
+    prepare_so(
+        config,
+        args.nicas_workspace,
+        hdiag_workspace_path=args.hdiag_workspace,
+        vbal_workspace_path=args.vbal_workspace,
+        workspace=args.workspace,
+        clean=args.clean,
+        variant=args.variant,
+        debug_core=args.debug_core,
+    )
+    return 0
+
+
+def so_submit_command(args) -> int:
+    jobid = submit_so(
+        args.workspace,
+        wait=args.wait,
+        poll_seconds=args.poll_seconds,
+        retries=args.retries,
+        variant=args.variant,
+    )
+    print(f"JOBID={jobid}")
+    return 0
+
+
+def so_validate_command(args) -> int:
+    validate_so(args.workspace, variant=args.variant)
+    return 0
+
+
+def so_all_command(args) -> int:
+    config = load_config(args.config)
+    workspace = prepare_so(
+        config,
+        args.nicas_workspace,
+        hdiag_workspace_path=args.hdiag_workspace,
+        vbal_workspace_path=args.vbal_workspace,
+        workspace=args.workspace,
+        clean=args.clean,
+        variant=args.variant,
+        debug_core=args.debug_core,
+    )
+    jobid = submit_so(
+        workspace,
+        wait=True,
+        poll_seconds=args.poll_seconds,
+        retries=args.retries,
+        variant=args.variant,
+    )
+    print(f"JOBID={jobid}")
+    return 0
+
+
 def parser():
     p = argparse.ArgumentParser(prog="mpasbcov", description="Executa etapas de calibração BUMP/SABER da B-matrix")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -1279,6 +1973,43 @@ def parser():
     nall.add_argument("--parallel", action="store_true")
     nall.add_argument("--retries", type=int, default=2)
     nall.set_defaults(func=nicas_all_command)
+
+    soprep = sub.add_parser("so-prepare", help="Prepara teste de observação única")
+    soprep.add_argument("--config", default=DEFAULT_CONFIG)
+    soprep.add_argument("--nicas-workspace", required=True)
+    soprep.add_argument("--hdiag-workspace")
+    soprep.add_argument("--vbal-workspace")
+    soprep.add_argument("--workspace")
+    soprep.add_argument("--clean", action="store_true")
+    soprep.add_argument("--variant", choices=SO_VARIANTS, default="default")
+    soprep.add_argument("--debug-core", action="store_true")
+    soprep.set_defaults(func=so_prepare_command)
+
+    sosubmit = sub.add_parser("so-submit", help="Submete teste de observação única")
+    sosubmit.add_argument("--workspace", required=True)
+    sosubmit.add_argument("--wait", action="store_true")
+    sosubmit.add_argument("--poll-seconds", type=int, default=30)
+    sosubmit.add_argument("--retries", type=int, default=2)
+    sosubmit.add_argument("--variant", choices=SO_VARIANTS, default="default")
+    sosubmit.set_defaults(func=so_submit_command)
+
+    sovalidate = sub.add_parser("so-validate", help="Valida teste de observação única")
+    sovalidate.add_argument("--workspace", required=True)
+    sovalidate.add_argument("--variant", choices=SO_VARIANTS, default="default")
+    sovalidate.set_defaults(func=so_validate_command)
+
+    soall = sub.add_parser("so-all", help="Prepara, submete, espera e valida SO")
+    soall.add_argument("--config", default=DEFAULT_CONFIG)
+    soall.add_argument("--nicas-workspace", required=True)
+    soall.add_argument("--hdiag-workspace")
+    soall.add_argument("--vbal-workspace")
+    soall.add_argument("--workspace")
+    soall.add_argument("--clean", action="store_true")
+    soall.add_argument("--poll-seconds", type=int, default=30)
+    soall.add_argument("--retries", type=int, default=2)
+    soall.add_argument("--variant", choices=SO_VARIANTS, default="default")
+    soall.add_argument("--debug-core", action="store_true")
+    soall.set_defaults(func=so_all_command)
 
     return p
 

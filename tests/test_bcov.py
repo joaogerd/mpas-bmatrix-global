@@ -5,16 +5,25 @@ import pytest
 import mpas_workflow.bcov as bcov
 from mpas_workflow.bcov import (
     NICAS_VARIABLES,
+    SO_BACKGROUND_VARIABLES,
+    create_so_background,
     link_static_files,
+    link_so_support,
     nicas_home_failure_files,
     require_hdiag_members,
     submit_nicas,
     submit_nicas_variable,
+    submit_so,
     validate_hdiag,
     validate_nicas,
+    validate_so,
+    validate_so_background,
     validate_vbal,
     write_hdiag_yaml,
     write_nicas_yaml,
+    write_so_pbs,
+    write_so_t_only_diagnostic_pbs,
+    write_so_yaml,
     write_vbal_yaml,
 )
 
@@ -391,3 +400,309 @@ def test_nicas_pbs_avoids_unsupported_jaci_directives(tmp_path, monkeypatch):
     ]
     assert all("#PBS -d" not in text for text in texts)
     assert all("%1" not in text for text in texts)
+
+
+def test_write_so_yaml_reads_nicas_stddev_and_vbal(tmp_path):
+    output = tmp_path / "run_SO.yaml"
+    nicas = tmp_path / "nicas" / "merge"
+    stddev = tmp_path / "hdiag" / "HDIAG" / "mpas.stddev.nc"
+    vbal = tmp_path / "vbal" / "VBAL"
+
+    write_so_yaml(
+        output,
+        date="2026-06-10T00:00:00Z",
+        nicas_dir=nicas,
+        stddev_file=stddev,
+        vbal_dir=vbal,
+    )
+
+    text = output.read_text()
+    assert "cost type: 3D-Var" in text
+    assert "saber block name: BUMP_NICAS" in text
+    assert "read local nicas: true" in text
+    assert f"data directory: {nicas}" in text
+    assert "saber block name: StdDev" in text
+    assert f"filename: {stddev}" in text
+    assert "saber block name: BUMP_VerticalBalance" in text
+    assert f"data directory: {vbal}" in text
+    assert "read local sampling: true" in text
+    assert "read vertical balance: true" in text
+    assert "linear variable change name: Control2Analysis" in text
+    assert "obsfile: ./obsout_SO_T.h5" in text
+    assert "obsfile: ./obsout_SO_U.h5" in text
+    assert text.count("vertical coordinate: air_pressure") == 2
+    assert text.count("interpolation method: log-linear") == 2
+    assert "stream name: background" not in text
+    assert "filename: ./bg_so.nc" in text
+    assert "transform model to analysis: false" in text
+    assert "filename: ./bg.nc" not in text
+
+
+@pytest.mark.parametrize(
+    ("variant", "present", "absent"),
+    [
+        ("t-only", "name: SO_T", "name: SO_U"),
+        ("u-only", "name: SO_U", "name: SO_T"),
+    ],
+)
+def test_write_so_yaml_selects_diagnostic_observer(
+    tmp_path, variant, present, absent
+):
+    output = tmp_path / f"run_SO_{variant}.yaml"
+
+    write_so_yaml(
+        output,
+        date="2026-06-10T00:00:00Z",
+        nicas_dir=tmp_path / "nicas",
+        stddev_file=tmp_path / "mpas.stddev.nc",
+        vbal_dir=tmp_path / "vbal",
+        variant=variant,
+    )
+
+    text = output.read_text()
+    assert present in text
+    assert absent not in text
+
+
+def test_link_so_support_returns_template_without_linking_background(tmp_path):
+    hdiag_run = tmp_path / "HDIAG"
+    run_dir = tmp_path / "SO"
+    hdiag_run.mkdir()
+    run_dir.mkdir()
+    for name in [
+        "bg.nc",
+        "templateFields.10242.nc",
+        "namelist.atmosphere_240km",
+        "streams.atmosphere_240km",
+    ]:
+        (hdiag_run / name).touch()
+
+    template = link_so_support(hdiag_run, run_dir)
+
+    assert template == hdiag_run / "templateFields.10242.nc"
+    assert not (run_dir / "bg.nc").exists()
+
+
+def test_create_so_background_adds_required_derived_variables(tmp_path):
+    netCDF4 = pytest.importorskip("netCDF4")
+    source = tmp_path / "templateFields.10242.nc"
+    output = tmp_path / "bg_so.nc"
+    with netCDF4.Dataset(source, "w") as dataset:
+        dataset.createDimension("Time", 1)
+        dataset.createDimension("nCells", 1)
+        dataset.createDimension("nEdges", 1)
+        dataset.createDimension("nVertLevels", 1)
+        cell_dims = ("Time", "nCells", "nVertLevels")
+        edge_dims = ("Time", "nEdges", "nVertLevels")
+        values = {
+            "surface_pressure": (cell_dims, 100000.0),
+            "uReconstructMeridional": (cell_dims, 1.0),
+            "uReconstructZonal": (cell_dims, 2.0),
+            "theta": (cell_dims, 300.0),
+            "rho": (cell_dims, 1.0),
+            "u": (edge_dims, 3.0),
+            "qv": (cell_dims, 0.01),
+            "pressure_base": (cell_dims, 90000.0),
+            "pressure_p": (cell_dims, 10000.0),
+        }
+        for name, (dimensions, value) in values.items():
+            dataset.createVariable(name, "f4", dimensions)[:] = value
+
+    create_so_background(source, output)
+
+    assert validate_so_background(output)
+    with netCDF4.Dataset(output) as dataset:
+        assert set(SO_BACKGROUND_VARIABLES) <= set(dataset.variables)
+        assert dataset.variables["pressure"][0, 0, 0] == pytest.approx(100000.0)
+        assert dataset.variables["air_pressure"][0, 0, 0] == pytest.approx(100000.0)
+        assert dataset.variables["air_pressure_at_surface"][0, 0] == pytest.approx(
+            100000.0
+        )
+        assert dataset.variables["temperature"][0, 0, 0] == pytest.approx(300.0)
+        assert dataset.variables["air_temperature"][0, 0, 0] == pytest.approx(
+            300.0
+        )
+        assert dataset.variables["spechum"][0, 0, 0] == pytest.approx(
+            0.01 / 1.01
+        )
+        assert dataset.variables["eastward_wind"][0, 0, 0] == pytest.approx(2.0)
+        assert dataset.variables["northward_wind"][0, 0, 0] == pytest.approx(1.0)
+
+
+def test_validate_so_background_rejects_missing_derived_variables(tmp_path):
+    netCDF4 = pytest.importorskip("netCDF4")
+    background = tmp_path / "bg_so.nc"
+    with netCDF4.Dataset(background, "w"):
+        pass
+
+    with pytest.raises(SystemExit, match="spechum.*temperature.*pressure"):
+        validate_so_background(background)
+
+
+def test_write_so_pbs_uses_variational_and_jaci_workdir(tmp_path):
+    install = tmp_path / "install"
+    exe = install / "bin" / "mpasjedi_variational.x"
+    exe.parent.mkdir(parents=True)
+    exe.touch()
+    run_dir = tmp_path / "SO"
+    run_dir.mkdir()
+    config = {
+        "project": {"project_root": str(tmp_path)},
+        "environment": {"loader": "load.sh"},
+        "install": {"root": str(install)},
+        "mesh": {"nproc": 2},
+        "pbs": {"queue": "queue", "walltime_short": "00:10:00"},
+    }
+
+    write_so_pbs(config, run_dir)
+
+    text = (run_dir / "qsub_so.bash").read_text()
+    assert str(exe) in text
+    assert f'cd "{run_dir}"' in text
+    assert "GFORTRAN_CONVERT_UNIT=big_endian:101-200" in text
+    assert "./run_SO.yaml ./run_SO.runlog" in text
+    assert "#PBS -d" not in text
+    assert "#PBS -J" not in text
+
+
+def test_write_so_pbs_uses_variant_artifacts(tmp_path):
+    install = tmp_path / "install"
+    exe = install / "bin" / "mpasjedi_variational.x"
+    exe.parent.mkdir(parents=True)
+    exe.touch()
+    run_dir = tmp_path / "SO"
+    run_dir.mkdir()
+    config = {
+        "project": {"project_root": str(tmp_path)},
+        "environment": {"loader": "load.sh"},
+        "install": {"root": str(install)},
+        "mesh": {"nproc": 2},
+        "pbs": {"queue": "queue", "walltime_short": "00:10:00"},
+    }
+
+    write_so_pbs(config, run_dir, variant="t-only")
+
+    text = (run_dir / "qsub_so_t_only.bash").read_text()
+    assert "./run_SO_t_only.yaml ./run_SO_t_only.runlog" in text
+    assert "> stdout_t_only.log 2> stderr_t_only.log" in text
+    assert "ulimit -c unlimited" not in text
+    assert "GFORTRAN_ERROR_BACKTRACE" not in text
+
+
+def test_write_so_t_only_diagnostic_pbs(tmp_path):
+    install = tmp_path / "install"
+    exe = install / "bin" / "mpasjedi_variational.x"
+    exe.parent.mkdir(parents=True)
+    exe.touch()
+    run_dir = tmp_path / "SO"
+    run_dir.mkdir()
+    config = {
+        "project": {"project_root": str(tmp_path)},
+        "environment": {"loader": "load.sh"},
+        "install": {"root": str(install)},
+        "mesh": {"nproc": 128},
+        "pbs": {"queue": "queue", "walltime_short": "00:10:00"},
+    }
+
+    write_so_t_only_diagnostic_pbs(config, run_dir)
+
+    debug = (run_dir / "qsub_so_t_only_debug.bash").read_text()
+    gdb = (run_dir / "qsub_so_t_only_gdb1.bash").read_text()
+    assert "run_SO_t_only.yaml ./run_SO_t_only_debug.runlog" in debug
+    assert "stdout_t_only_debug.log" in debug
+    assert "stderr_t_only_debug.log" in debug
+    assert "ulimit -c unlimited" in debug
+    assert "export GFORTRAN_ERROR_BACKTRACE=1" in debug
+    assert "cat /proc/sys/kernel/core_pattern" in debug
+    assert "module list" in debug
+    assert "command -v \"$tool\"" in debug
+    assert "#PBS -l select=1:ncpus=1:mpiprocs=1" in gdb
+    assert "mpiexec -n 1 gdb --batch --quiet" in gdb
+    assert "thread apply all bt full" in gdb
+    assert "./run_SO_t_only.yaml ./run_SO_t_only_gdb1.runlog" in gdb
+
+
+def write_so_products(run_dir, variant="default"):
+    artifacts = bcov.so_artifacts(variant)
+    (run_dir / artifacts["runlog"]).write_text(
+        "Run: Finishing oops::Variational<MPAS> with status = 0\n"
+    )
+    (run_dir / "an.2026-06-10_00.00.00.nc").touch()
+    if variant in ("default", "t-only"):
+        (run_dir / "obsout_SO_T.h5").touch()
+    if variant in ("default", "u-only"):
+        (run_dir / "obsout_SO_U.h5").touch()
+
+
+def test_validate_so_accepts_minimum_products(tmp_path):
+    write_so_products(tmp_path)
+    assert validate_so(tmp_path)
+
+
+@pytest.mark.parametrize("variant", ["t-only", "u-only"])
+def test_validate_so_accepts_variant_products(tmp_path, variant):
+    write_so_products(tmp_path, variant=variant)
+    assert validate_so(tmp_path, variant=variant)
+
+
+def test_validate_so_variant_requires_its_observation_output(tmp_path):
+    artifacts = bcov.so_artifacts("t-only")
+    (tmp_path / artifacts["runlog"]).write_text(
+        "Run: Finishing oops::Variational<MPAS> with status = 0\n"
+    )
+    (tmp_path / "an.2026-06-10_00.00.00.nc").touch()
+
+    with pytest.raises(SystemExit):
+        validate_so(tmp_path, variant="t-only")
+
+
+def test_validate_so_warns_for_stale_pbs_home_output(tmp_path, capsys):
+    write_so_products(tmp_path)
+    (tmp_path / "SOTest.o123").write_text("Could not chdir to home directory\n")
+
+    assert validate_so(tmp_path)
+    output = capsys.readouterr().out
+    assert "WARNING: stale PBS output" in output
+    assert "SUCCESS: SO validado." in output
+
+
+def test_validate_so_reports_pbs_home_when_products_missing(tmp_path, capsys):
+    (tmp_path / "SOTest.o123").write_text("Could not chdir to home directory\n")
+
+    with pytest.raises(SystemExit):
+        validate_so(tmp_path)
+    assert "falha PBS/HOME: Could not chdir to home directory" in capsys.readouterr().out
+
+
+def test_submit_so_retries_pbs_home_failure(tmp_path, monkeypatch, capsys):
+    attempts = []
+
+    def fake_qsub(pbs_file, cwd):
+        attempts.append(1)
+        return f"job{len(attempts)}"
+
+    def fake_wait(jobid, poll_seconds):
+        if jobid == "job1":
+            (tmp_path / "SOTest.o123").write_text("Could not chdir to home directory\n")
+        else:
+            write_so_products(tmp_path)
+
+    monkeypatch.setattr(bcov, "qsub", fake_qsub)
+    monkeypatch.setattr(bcov, "wait_for_pbs_job", fake_wait)
+
+    assert submit_so(tmp_path, wait=True, retries=2, poll_seconds=1) == "job2"
+    assert len(attempts) == 2
+    assert "Falha PBS/HOME na JACI, ressubmetendo etapa SO." in capsys.readouterr().out
+
+
+def test_submit_so_uses_variant_pbs(tmp_path, monkeypatch):
+    submitted = []
+
+    def fake_qsub(pbs_file, cwd):
+        submitted.append((pbs_file, cwd))
+        return "job1"
+
+    monkeypatch.setattr(bcov, "qsub", fake_qsub)
+
+    assert submit_so(tmp_path, variant="u-only") == "job1"
+    assert submitted == [("qsub_so_u_only.bash", tmp_path)]
