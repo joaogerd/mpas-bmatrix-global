@@ -1050,35 +1050,45 @@ def submit_nicas(
 def validate_nicas(workspace: str | Path) -> bool:
     root = Path(workspace)
     errors = []
+    warnings = []
     for variable in NICAS_VARIABLES:
         run_dir = root / variable
-        if nicas_home_failure_files(run_dir):
+        variable_errors = nicas_variable_errors(run_dir)
+        if nicas_home_failure_files(run_dir) and variable_errors:
             errors.append(
                 f"{variable}: falha PBS/HOME: Could not chdir to home directory"
             )
-        errors.extend(f"{variable}: {error}" for error in nicas_variable_errors(run_dir))
+        elif nicas_home_failure_files(run_dir):
+            warnings.append(
+                f"{variable}: stale PBS output: Could not chdir to home directory"
+            )
+        errors.extend(f"{variable}: {error}" for error in variable_errors)
 
     merge_dir = root / "merge"
-    if nicas_home_failure_files(merge_dir):
-        errors.append("merge: falha PBS/HOME: Could not chdir to home directory")
+    merge_errors = []
     for name in ["merge.done", "mpas_nicas.nc", "mpas.nicas_norm.nc", "mpas.dirac_nicas.nc"]:
         if not (merge_dir / name).is_file():
-            errors.append(f"merge: produto ausente: {name}")
-    errors.extend(
-        f"merge: {error}"
-        for error in _validate_ranked_products(
+            merge_errors.append(f"produto ausente: {name}")
+    merge_errors.extend(
+        _validate_ranked_products(
             sorted(merge_dir.glob("mpas_nicas_local_*")), "mpas_nicas_local"
         )
     )
-    errors.extend(
-        f"merge: {error}"
-        for error in _validate_ranked_products(
+    merge_errors.extend(
+        _validate_ranked_products(
             sorted(merge_dir.glob("mpas_nicas_grids_local_*")), "mpas_nicas_grids_local"
         )
     )
+    if nicas_home_failure_files(merge_dir) and merge_errors:
+        errors.append("merge: falha PBS/HOME: Could not chdir to home directory")
+    elif nicas_home_failure_files(merge_dir):
+        warnings.append("merge: stale PBS output: Could not chdir to home directory")
+    errors.extend(f"merge: {error}" for error in merge_errors)
 
     print("=== NICAS validation ===")
     print(f"WORKSPACE={root}")
+    for warning in warnings:
+        print(f"WARNING: {warning}")
     if errors:
         for error in errors:
             print(f"  - {error}")

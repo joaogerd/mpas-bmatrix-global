@@ -324,7 +324,9 @@ def test_nicas_home_failure_retry_is_limited(tmp_path, monkeypatch):
     assert len(attempts) == 3
 
 
-def test_validate_nicas_reports_pbs_home_failure(tmp_path, capsys):
+def test_validate_nicas_warns_for_stale_pbs_home_failure_with_complete_products(
+    tmp_path, capsys
+):
     for variable in NICAS_VARIABLES:
         run_dir = tmp_path / variable
         run_dir.mkdir()
@@ -332,12 +334,37 @@ def test_validate_nicas_reports_pbs_home_failure(tmp_path, capsys):
     (tmp_path / NICAS_VARIABLES[0] / "NICAS.o123").write_text(
         "Could not chdir to home directory\n"
     )
+
+    merge_dir = tmp_path / "merge"
+    merge_dir.mkdir()
+    for name in ["merge.done", "mpas_nicas.nc", "mpas.nicas_norm.nc", "mpas.dirac_nicas.nc"]:
+        (merge_dir / name).touch()
+    write_ranked_products(merge_dir, "mpas_nicas")
+    write_ranked_products(merge_dir, "mpas_nicas_grids")
+    (merge_dir / "NICASmerge.o456").write_text("Could not chdir to home directory\n")
+
+    assert validate_nicas(tmp_path)
+    output = capsys.readouterr().out
+    assert "WARNING: stream_function: stale PBS output" in output
+    assert "WARNING: merge: stale PBS output" in output
+    assert "SUCCESS: NICAS split/merge validado." in output
+
+
+def test_validate_nicas_reports_pbs_home_failure_when_products_are_missing(
+    tmp_path, capsys
+):
+    for variable in NICAS_VARIABLES:
+        run_dir = tmp_path / variable
+        run_dir.mkdir()
+        write_nicas_variable_products(run_dir)
+    broken = tmp_path / NICAS_VARIABLES[0]
+    (broken / "mpas_nicas.nc").unlink()
+    (broken / "NICAS.o123").write_text("Could not chdir to home directory\n")
     (tmp_path / "merge").mkdir()
 
     with pytest.raises(SystemExit):
         validate_nicas(tmp_path)
     assert "falha PBS/HOME: Could not chdir to home directory" in capsys.readouterr().out
-    assert nicas_home_failure_files(tmp_path / NICAS_VARIABLES[0])
 
 
 def test_nicas_pbs_avoids_unsupported_jaci_directives(tmp_path, monkeypatch):
