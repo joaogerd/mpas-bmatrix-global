@@ -23,6 +23,21 @@ STATE_VARIABLES = [
     "surface_pressure",
 ]
 MIN_HDIAG_MEMBERS = 4
+NICAS_VARIABLES = STATE_VARIABLES
+NICAS_DIRAC_POINTS = [
+    (-45.0, 0.0),
+    (-135.0, 0.0),
+    (45.0, 0.0),
+    (135.0, 0.0),
+    (-135.0, 45.0),
+    (-45.0, 45.0),
+    (45.0, 45.0),
+    (135.0, 45.0),
+    (-135.0, -45.0),
+    (-45.0, -45.0),
+    (45.0, -45.0),
+    (135.0, -45.0),
+]
 
 
 @dataclass(frozen=True)
@@ -69,6 +84,10 @@ def vbal_workspace(config, bflow_workspace: str | Path) -> Path:
 
 def hdiag_workspace(config, vbal_workspace_path: str | Path) -> Path:
     return covariance_root(config) / "hdiag" / Path(vbal_workspace_path).name
+
+
+def nicas_workspace(config, hdiag_workspace_path: str | Path) -> Path:
+    return covariance_root(config) / "nicas" / Path(hdiag_workspace_path).name
 
 
 def toolbox_exe(config) -> Path:
@@ -657,6 +676,417 @@ def print_hdiag_diagnostics(workspace: Path, tail_lines: int = 80) -> None:
         )
 
 
+def hdiag_date(hdiag_root: Path) -> str:
+    text = require_file(hdiag_root / "HDIAG" / "run_hdiag.yaml", "run_hdiag.yaml").read_text()
+    match = re.search(r"(?m)^\s*date:\s*&date\s+'([^']+)'", text)
+    if not match:
+        raise SystemExit("ERRO: data principal não encontrada no run_hdiag.yaml")
+    return match.group(1)
+
+
+def link_nicas_support(hdiag_run: Path, run_dir: Path) -> None:
+    required = ["bg.nc", "namelist.atmosphere_240km", "streams.atmosphere_240km"]
+    for name in required:
+        symlink_force(require_file(hdiag_run / name, name), run_dir / name)
+
+    for pattern in [
+        "templateFields.*.nc",
+        "*.graph.info",
+        "*.graph.info.part.*",
+        "*.invariant.nc",
+        "stream_list.atmosphere.*",
+        "geovars.yaml",
+        "keptvars.yaml",
+        "[A-Z]*",
+    ]:
+        for source in hdiag_run.glob(pattern):
+            symlink_force(source, run_dir / source.name)
+
+
+def write_nicas_yaml(
+    path: Path,
+    variable: str,
+    date: str,
+    nvertlevels: int,
+) -> None:
+    level = 1 if variable == "surface_pressure" else max(1, nvertlevels - 20 + 1)
+    dirac_yaml = "\n".join(
+        f"""      - longitude: {longitude}
+        latitude: {latitude}
+        level: {level}
+        variable: {variable}"""
+        for longitude, latitude in NICAS_DIRAC_POINTS
+    )
+    text = f"""geometry:
+  nml_file: "./namelist.atmosphere_240km"
+  streams_file: "./streams.atmosphere_240km"
+  deallocate non-da fields: true
+  bump vunit: "avgheight"
+background:
+  state variables:
+  - {variable}
+  filename: "./bg.nc"
+  date: &date '{date}'
+  stream name: control
+  transform model to analysis: false
+
+background error:
+  covariance model: SABER
+
+  saber central block:
+    saber block name: BUMP_NICAS
+    calibration:
+      io:
+        files prefix: mpas
+      drivers:
+        multivariate strategy: univariate
+        compute nicas: true
+        write local nicas: true
+        write global nicas: true
+        write nicas grids: true
+        internal dirac test: true
+      nicas:
+        resolution: 8
+        max horizontal grid size: 15000
+      dirac:
+{dirac_yaml}
+      input model files:
+      - parameter: rh
+        file:
+          filename: ../mpas.cor_rh.nc
+          date: *date
+          stream name: control
+      - parameter: rv
+        file:
+          filename: ../mpas.cor_rv.nc
+          date: *date
+          stream name: control
+      output model files:
+      - parameter: nicas_norm
+        file:
+          filename: ./mpas.nicas_norm.nc
+          date: *date
+          stream name: control
+      - parameter: dirac_nicas
+        file:
+          filename: ./mpas.dirac_nicas.nc
+          date: *date
+          stream name: control
+"""
+    write_text(path, text)
+
+
+def write_nicas_pbs(config, run_dir: Path, variable: str) -> None:
+    nproc = int(config["mesh"].get("nproc", config["pbs"].get("nproc", 64)))
+    queue = config["pbs"].get("queues", {}).get("bmatrix", config["pbs"].get("queue", "pesqmini"))
+    walltime = config["pbs"].get("walltime", {}).get("bmatrix", config["pbs"].get("walltime_short", "00:10:00"))
+    project_root = config["project"]["project_root"]
+    loader = config["environment"]["loader"]
+    exe = toolbox_exe(config)
+    text = f"""#!/bin/bash
+#PBS -N NICAS_{variable}
+#PBS -q {queue}
+#PBS -l select=1:ncpus={nproc}:mpiprocs={nproc}
+#PBS -l walltime={walltime}
+#PBS -j oe
+
+set -euo pipefail
+source "{project_root}/{loader}"
+cd "{run_dir}"
+export OMP_NUM_THREADS=1
+export GFORTRAN_CONVERT_UNIT=big_endian:101-200
+export FI_CXI_RX_MATCH_MODE=hybrid
+ulimit -s unlimited || true
+
+rm -f run_nicas.runlog stdout.log stderr.log
+mpiexec -n {nproc} {exe} ./run_nicas.yaml ./run_nicas.runlog > stdout.log 2> stderr.log
+"""
+    write_text(run_dir / "qsub_nicas.bash", text)
+
+
+def write_nicas_merge_files(config, workspace: Path) -> None:
+    merge_dir = workspace / "merge"
+    merge_dir.mkdir(parents=True, exist_ok=True)
+    nproc = int(config["mesh"].get("nproc", config["pbs"].get("nproc", 64)))
+    padded = f"{nproc:06d}"
+
+    for rank in range(1, nproc + 1):
+        rank_padded = f"{rank:06d}"
+        local_name = f"mpas_nicas_local_{padded}-{rank_padded}.nc"
+        grids_name = f"mpas_nicas_grids_local_{padded}-{rank_padded}.nc"
+        commands = ["#!/bin/bash", "set -euo pipefail", f"rm -f {local_name} {grids_name}"]
+        for variable in NICAS_VARIABLES:
+            commands.extend(
+                [
+                    f"ncks -A ../{variable}/{local_name} {local_name}",
+                    f"ncatted -O -a eulaVlliF_,global,d,, {local_name}",
+                    f"ncks -A ../{variable}/{grids_name} {grids_name}",
+                    f"ncatted -O -a eulaVlliF_,global,d,, {grids_name}",
+                ]
+            )
+        write_text(merge_dir / f"merge_nicas_{rank_padded}.bash", "\n".join(commands) + "\n")
+
+    global_commands = ["#!/bin/bash", "set -euo pipefail", "rm -f mpas_nicas.nc"]
+    for variable in NICAS_VARIABLES:
+        global_commands.extend(
+            [
+                f"ncks -A ../{variable}/mpas_nicas.nc mpas_nicas.nc",
+                "ncatted -O -a eulaVlliF_,global,d,, mpas_nicas.nc",
+            ]
+        )
+    write_text(merge_dir / "merge_nicas_global.bash", "\n".join(global_commands) + "\n")
+
+    queue = config["pbs"].get("queues", {}).get("bmatrix", config["pbs"].get("queue", "pesqmini"))
+    walltime = config["pbs"].get("walltime", {}).get("bmatrix", config["pbs"].get("walltime_short", "00:10:00"))
+    project_root = config["project"]["project_root"]
+    loader = config["environment"]["loader"]
+    variables = " ".join(NICAS_VARIABLES)
+    text = f"""#!/bin/bash
+#PBS -N NICASmerge
+#PBS -q {queue}
+#PBS -l select=1:ncpus={nproc}
+#PBS -l walltime={walltime}
+#PBS -j oe
+
+set -euo pipefail
+source "{project_root}/{loader}"
+module load nco 2>/dev/null || true
+command -v ncks >/dev/null
+command -v ncatted >/dev/null
+cd "{merge_dir}"
+
+rm -f stdout.log stderr.log merge.done mpas.nicas_norm.nc mpas.dirac_nicas.nc
+for script in merge_nicas_[0-9][0-9][0-9][0-9][0-9][0-9].bash; do
+  chmod +x "$script"
+  ./"$script" &
+done
+wait
+chmod +x merge_nicas_global.bash
+./merge_nicas_global.bash
+for variable in {variables}; do
+  ncks -A -v "$variable" "../$variable/mpas.nicas_norm.nc" mpas.nicas_norm.nc
+  ncks -A -v "$variable" "../$variable/mpas.dirac_nicas.nc" mpas.dirac_nicas.nc
+done
+touch merge.done
+"""
+    write_text(merge_dir / "qsub_nicas_merge.bash", text)
+
+
+def prepare_nicas(
+    config,
+    hdiag_workspace_path: str | Path,
+    workspace: str | Path | None = None,
+    clean: bool = False,
+) -> Path:
+    hdiag_root = Path(hdiag_workspace_path)
+    validate_hdiag(hdiag_root)
+    hdiag_run = hdiag_root / "HDIAG"
+    date = hdiag_date(hdiag_root)
+    out = Path(workspace) if workspace else nicas_workspace(config, hdiag_root)
+    if clean and out.exists():
+        shutil.rmtree(out)
+    out.mkdir(parents=True, exist_ok=True)
+
+    symlink_force(require_file(hdiag_run / "mpas.cor_rh.nc"), out / "mpas.cor_rh.nc")
+    symlink_force(require_file(hdiag_run / "mpas.cor_rv.nc"), out / "mpas.cor_rv.nc")
+    symlink_force(require_file(hdiag_run / "mpas.stddev.nc"), out / "mpas.stddev.nc")
+
+    for variable in NICAS_VARIABLES:
+        run_dir = out / variable
+        run_dir.mkdir(parents=True, exist_ok=True)
+        link_nicas_support(hdiag_run, run_dir)
+        write_nicas_yaml(
+            run_dir / "run_nicas.yaml",
+            variable,
+            date,
+            int(config["mesh"].get("nvertlevels", 55)),
+        )
+        write_nicas_pbs(config, run_dir, variable)
+
+    write_nicas_merge_files(config, out)
+    write_text(
+        out / "README.md",
+        f"# NICAS split/merge workspace\n\nHDIAG workspace: `{hdiag_root}`\n",
+    )
+    print("=== NICAS split/merge workspace ===")
+    print(f"WORKSPACE={out}")
+    print(f"VARIABLES={','.join(NICAS_VARIABLES)}")
+    print(f"MERGE_DIR={out / 'merge'}")
+    return out
+
+
+def _qsub_afterok(pbs_file: str, cwd: Path, jobids: list[str]) -> str:
+    dependency = ":".join(jobids)
+    cmd = ["qsub", "-W", f"depend=afterok:{dependency}", pbs_file]
+    print("+", " ".join(cmd), flush=True)
+    proc = subprocess.run(cmd, cwd=cwd, check=False, text=True, capture_output=True)
+    if proc.stdout.strip():
+        print(proc.stdout.strip())
+    if proc.stderr.strip():
+        print(proc.stderr.strip())
+    if proc.returncode != 0:
+        raise SystemExit(f"ERRO: qsub do merge NICAS falhou com código {proc.returncode}")
+    return proc.stdout.strip().split()[0]
+
+
+def nicas_home_failure_files(run_dir: Path) -> list[Path]:
+    failures = []
+    for pattern in ["*.o*", "*.e*"]:
+        for path in run_dir.glob(pattern):
+            if path.is_file() and "Could not chdir to home directory" in path.read_text(
+                errors="replace"
+            ):
+                failures.append(path)
+    return sorted(set(failures))
+
+
+def nicas_variable_errors(run_dir: Path) -> list[str]:
+    runlog = run_dir / "run_nicas.runlog"
+    text = runlog.read_text(errors="replace") if runlog.is_file() else ""
+    errors = []
+    if "Finishing oops::ErrorCovarianceToolbox<MPAS> with status = 0" not in text:
+        errors.append("status final de sucesso ausente")
+    for name in ["mpas_nicas.nc", "mpas.nicas_norm.nc", "mpas.dirac_nicas.nc"]:
+        if not (run_dir / name).is_file():
+            errors.append(f"produto ausente: {name}")
+    errors.extend(
+        _validate_ranked_products(
+            sorted(run_dir.glob("mpas_nicas_local_*")), "mpas_nicas_local"
+        )
+    )
+    errors.extend(
+        _validate_ranked_products(
+            sorted(run_dir.glob("mpas_nicas_grids_local_*")), "mpas_nicas_grids_local"
+        )
+    )
+    return errors
+
+
+def clean_nicas_variable_outputs(run_dir: Path) -> None:
+    for name in [
+        "run_nicas.runlog",
+        "stdout.log",
+        "stderr.log",
+        "mpas_nicas.nc",
+        "mpas.nicas_norm.nc",
+        "mpas.dirac_nicas.nc",
+    ]:
+        (run_dir / name).unlink(missing_ok=True)
+    for pattern in ["mpas_nicas_local_*", "mpas_nicas_grids_local_*"]:
+        for path in run_dir.glob(pattern):
+            path.unlink()
+
+
+def submit_nicas_variable(
+    variable: str,
+    run_dir: Path,
+    retries: int,
+    poll_seconds: int,
+) -> str:
+    for attempt in range(retries + 1):
+        clean_nicas_variable_outputs(run_dir)
+        for path in nicas_home_failure_files(run_dir):
+            path.unlink()
+        jobid = qsub("qsub_nicas.bash", run_dir)
+        write_text(run_dir / "job_id.txt", jobid + "\n")
+        wait_for_pbs_job(jobid, poll_seconds=poll_seconds)
+
+        if nicas_home_failure_files(run_dir):
+            if attempt < retries:
+                print(f"Falha PBS/HOME na JACI, ressubmetendo variável {variable}.")
+                continue
+            raise SystemExit(
+                f"ERRO: falha PBS/HOME persistiu para {variable} "
+                f"após {retries} retries."
+            )
+
+        errors = nicas_variable_errors(run_dir)
+        if not errors:
+            print(f"SUCCESS: NICAS validado para {variable}.")
+            return jobid
+
+        raise SystemExit(
+            f"ERRO: NICAS falhou para {variable}: " + "; ".join(errors)
+        )
+    raise AssertionError("loop de retry NICAS terminou inesperadamente")
+
+
+def submit_nicas(
+    workspace: str | Path,
+    wait: bool = False,
+    poll_seconds: int = 30,
+    parallel: bool = False,
+    retries: int = 2,
+) -> str:
+    root = Path(workspace)
+    merge_dir = root / "merge"
+    retries = max(0, retries)
+
+    if parallel:
+        jobids = []
+        for variable in NICAS_VARIABLES:
+            run_dir = root / variable
+            jobid = qsub("qsub_nicas.bash", run_dir)
+            write_text(run_dir / "job_id.txt", jobid + "\n")
+            jobids.append(jobid)
+        merge_jobid = _qsub_afterok("qsub_nicas_merge.bash", merge_dir, jobids)
+    else:
+        for variable in NICAS_VARIABLES:
+            submit_nicas_variable(
+                variable,
+                root / variable,
+                retries=retries,
+                poll_seconds=poll_seconds,
+            )
+        merge_jobid = qsub("qsub_nicas_merge.bash", merge_dir)
+
+    write_text(merge_dir / "job_id.txt", merge_jobid + "\n")
+    if wait:
+        wait_for_pbs_job(merge_jobid, poll_seconds=poll_seconds)
+        validate_nicas(root)
+    return merge_jobid
+
+
+def validate_nicas(workspace: str | Path) -> bool:
+    root = Path(workspace)
+    errors = []
+    for variable in NICAS_VARIABLES:
+        run_dir = root / variable
+        if nicas_home_failure_files(run_dir):
+            errors.append(
+                f"{variable}: falha PBS/HOME: Could not chdir to home directory"
+            )
+        errors.extend(f"{variable}: {error}" for error in nicas_variable_errors(run_dir))
+
+    merge_dir = root / "merge"
+    if nicas_home_failure_files(merge_dir):
+        errors.append("merge: falha PBS/HOME: Could not chdir to home directory")
+    for name in ["merge.done", "mpas_nicas.nc", "mpas.nicas_norm.nc", "mpas.dirac_nicas.nc"]:
+        if not (merge_dir / name).is_file():
+            errors.append(f"merge: produto ausente: {name}")
+    errors.extend(
+        f"merge: {error}"
+        for error in _validate_ranked_products(
+            sorted(merge_dir.glob("mpas_nicas_local_*")), "mpas_nicas_local"
+        )
+    )
+    errors.extend(
+        f"merge: {error}"
+        for error in _validate_ranked_products(
+            sorted(merge_dir.glob("mpas_nicas_grids_local_*")), "mpas_nicas_grids_local"
+        )
+    )
+
+    print("=== NICAS validation ===")
+    print(f"WORKSPACE={root}")
+    if errors:
+        for error in errors:
+            print(f"  - {error}")
+        raise SystemExit("ERRO: NICAS falhou ou ficou incompleto.")
+    print("SUCCESS: NICAS split/merge validado.")
+    return True
+
+
 def vbal_prepare_command(args) -> int:
     config = load_config(args.config)
     prepare_vbal(config, args.bflow_workspace, workspace=args.workspace, clean=args.clean)
@@ -714,6 +1144,49 @@ def hdiag_all_command(args) -> int:
     return 0
 
 
+def nicas_prepare_command(args) -> int:
+    config = load_config(args.config)
+    prepare_nicas(config, args.hdiag_workspace, workspace=args.workspace, clean=args.clean)
+    return 0
+
+
+def nicas_submit_command(args) -> int:
+    jobid = submit_nicas(
+        args.workspace,
+        wait=args.wait,
+        poll_seconds=args.poll_seconds,
+        parallel=args.parallel,
+        retries=args.retries,
+    )
+    print(f"MERGE_JOBID={jobid}")
+    return 0
+
+
+def nicas_validate_command(args) -> int:
+    validate_nicas(args.workspace)
+    return 0
+
+
+def nicas_all_command(args) -> int:
+    config = load_config(args.config)
+    workspace = prepare_nicas(
+        config,
+        args.hdiag_workspace,
+        workspace=args.workspace,
+        clean=args.clean,
+    )
+    jobid = submit_nicas(
+        workspace,
+        wait=True,
+        poll_seconds=args.poll_seconds,
+        parallel=args.parallel,
+        retries=args.retries,
+    )
+    print(f"MERGE_JOBID={jobid}")
+    validate_nicas(workspace)
+    return 0
+
+
 def parser():
     p = argparse.ArgumentParser(prog="mpasbcov", description="Executa etapas de calibração BUMP/SABER da B-matrix")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -767,6 +1240,35 @@ def parser():
     hall.add_argument("--clean", action="store_true")
     hall.add_argument("--poll-seconds", type=int, default=30)
     hall.set_defaults(func=hdiag_all_command)
+
+    nprep = sub.add_parser("nicas-prepare", help="Prepara calibração NICAS split/merge")
+    nprep.add_argument("--config", default=DEFAULT_CONFIG)
+    nprep.add_argument("--hdiag-workspace", required=True)
+    nprep.add_argument("--workspace")
+    nprep.add_argument("--clean", action="store_true")
+    nprep.set_defaults(func=nicas_prepare_command)
+
+    nsubmit = sub.add_parser("nicas-submit", help="Submete jobs NICAS e merge dependente")
+    nsubmit.add_argument("--workspace", required=True)
+    nsubmit.add_argument("--wait", action="store_true", help="Aguarda e valida também o merge")
+    nsubmit.add_argument("--poll-seconds", type=int, default=30)
+    nsubmit.add_argument("--parallel", action="store_true", help="Usa submissão paralela legada")
+    nsubmit.add_argument("--retries", type=int, default=2, help="Retries para falha PBS/HOME")
+    nsubmit.set_defaults(func=nicas_submit_command)
+
+    nvalidate = sub.add_parser("nicas-validate", help="Valida saída NICAS split/merge")
+    nvalidate.add_argument("--workspace", required=True)
+    nvalidate.set_defaults(func=nicas_validate_command)
+
+    nall = sub.add_parser("nicas-all", help="Prepara, submete, espera e valida NICAS")
+    nall.add_argument("--config", default=DEFAULT_CONFIG)
+    nall.add_argument("--hdiag-workspace", required=True)
+    nall.add_argument("--workspace")
+    nall.add_argument("--clean", action="store_true")
+    nall.add_argument("--poll-seconds", type=int, default=30)
+    nall.add_argument("--parallel", action="store_true")
+    nall.add_argument("--retries", type=int, default=2)
+    nall.set_defaults(func=nicas_all_command)
 
     return p
 

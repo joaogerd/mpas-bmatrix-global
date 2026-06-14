@@ -1,11 +1,20 @@
+from pathlib import Path
+
 import pytest
 
+import mpas_workflow.bcov as bcov
 from mpas_workflow.bcov import (
+    NICAS_VARIABLES,
     link_static_files,
+    nicas_home_failure_files,
     require_hdiag_members,
+    submit_nicas,
+    submit_nicas_variable,
     validate_hdiag,
+    validate_nicas,
     validate_vbal,
     write_hdiag_yaml,
+    write_nicas_yaml,
     write_vbal_yaml,
 )
 
@@ -151,3 +160,207 @@ def test_validate_hdiag_reports_bump_minimum_ensemble(tmp_path, capsys):
     assert "=== HDIAG diagnostics ===" in output
     assert "ens_ne/ens_nsub should be larger than 3" in output
     assert "CAUSA IDENTIFICADA" in output
+
+
+def test_write_nicas_yaml_reads_hdiag_correlations(tmp_path):
+    output = tmp_path / "run_nicas.yaml"
+
+    write_nicas_yaml(
+        output,
+        variable="temperature",
+        date="2026-06-10T00:00:00Z",
+        nvertlevels=55,
+    )
+
+    text = output.read_text()
+    assert "saber block name: BUMP_NICAS" in text
+    assert "compute nicas: true" in text
+    assert "write local nicas: true" in text
+    assert "write global nicas: true" in text
+    assert "filename: ../mpas.cor_rh.nc" in text
+    assert "filename: ../mpas.cor_rv.nc" in text
+    assert "variable: temperature" in text
+    assert "level: 36" in text
+    assert "BUMP_VerticalBalance" not in text
+    assert "PTB_f48mf24" not in text
+
+
+def test_validate_nicas_accepts_split_and_merged_products(tmp_path):
+    for variable in NICAS_VARIABLES:
+        run_dir = tmp_path / variable
+        run_dir.mkdir()
+        (run_dir / "run_nicas.runlog").write_text(
+            "Run: Finishing oops::ErrorCovarianceToolbox<MPAS> with status = 0\n"
+        )
+        for name in ["mpas_nicas.nc", "mpas.nicas_norm.nc", "mpas.dirac_nicas.nc"]:
+            (run_dir / name).touch()
+        write_ranked_products(run_dir, "mpas_nicas")
+        write_ranked_products(run_dir, "mpas_nicas_grids")
+
+    merge_dir = tmp_path / "merge"
+    merge_dir.mkdir()
+    for name in ["merge.done", "mpas_nicas.nc", "mpas.nicas_norm.nc", "mpas.dirac_nicas.nc"]:
+        (merge_dir / name).touch()
+    write_ranked_products(merge_dir, "mpas_nicas")
+    write_ranked_products(merge_dir, "mpas_nicas_grids")
+
+    assert validate_nicas(tmp_path)
+
+
+def write_nicas_variable_products(run_dir, count=2):
+    (run_dir / "run_nicas.runlog").write_text(
+        "Run: Finishing oops::ErrorCovarianceToolbox<MPAS> with status = 0\n"
+    )
+    for name in ["mpas_nicas.nc", "mpas.nicas_norm.nc", "mpas.dirac_nicas.nc"]:
+        (run_dir / name).touch()
+    write_ranked_products(run_dir, "mpas_nicas", count=count)
+    write_ranked_products(run_dir, "mpas_nicas_grids", count=count)
+
+
+def test_submit_nicas_is_sequential_by_default(tmp_path, monkeypatch):
+    variables = ["stream_function", "temperature"]
+    for variable in variables:
+        (tmp_path / variable).mkdir()
+    (tmp_path / "merge").mkdir()
+
+    submitted = []
+    jobs = {}
+
+    def fake_qsub(pbs_file, cwd):
+        jobid = f"job{len(submitted) + 1}"
+        submitted.append((pbs_file, Path(cwd).name))
+        jobs[jobid] = Path(cwd)
+        return jobid
+
+    def fake_wait(jobid, poll_seconds):
+        write_nicas_variable_products(jobs[jobid])
+
+    monkeypatch.setattr(bcov, "NICAS_VARIABLES", variables)
+    monkeypatch.setattr(bcov, "qsub", fake_qsub)
+    monkeypatch.setattr(bcov, "wait_for_pbs_job", fake_wait)
+
+    assert submit_nicas(tmp_path) == "job3"
+    assert submitted == [
+        ("qsub_nicas.bash", "stream_function"),
+        ("qsub_nicas.bash", "temperature"),
+        ("qsub_nicas_merge.bash", "merge"),
+    ]
+
+
+def test_submit_nicas_parallel_preserves_dependency_mode(tmp_path, monkeypatch):
+    variables = ["stream_function", "temperature"]
+    for variable in variables:
+        (tmp_path / variable).mkdir()
+    (tmp_path / "merge").mkdir()
+
+    submitted = []
+    monkeypatch.setattr(bcov, "NICAS_VARIABLES", variables)
+    monkeypatch.setattr(
+        bcov,
+        "qsub",
+        lambda pbs_file, cwd: submitted.append(Path(cwd).name) or f"job{len(submitted)}",
+    )
+    monkeypatch.setattr(
+        bcov,
+        "_qsub_afterok",
+        lambda pbs_file, cwd, jobids: submitted.append(("merge", jobids)) or "mergejob",
+    )
+    monkeypatch.setattr(
+        bcov,
+        "wait_for_pbs_job",
+        lambda *args, **kwargs: pytest.fail("parallel sem --wait não deve aguardar"),
+    )
+
+    assert submit_nicas(tmp_path, parallel=True) == "mergejob"
+    assert submitted == [
+        "stream_function",
+        "temperature",
+        ("merge", ["job1", "job2"]),
+    ]
+
+
+def test_nicas_home_failure_detection_and_retry(tmp_path, monkeypatch, capsys):
+    attempts = []
+
+    def fake_qsub(pbs_file, cwd):
+        attempts.append(1)
+        return f"job{len(attempts)}"
+
+    def fake_wait(jobid, poll_seconds):
+        if jobid == "job1":
+            (tmp_path / "NICAS_temperature.o123").write_text(
+                "Could not chdir to home directory\n"
+            )
+        else:
+            write_nicas_variable_products(tmp_path)
+
+    monkeypatch.setattr(bcov, "qsub", fake_qsub)
+    monkeypatch.setattr(bcov, "wait_for_pbs_job", fake_wait)
+
+    assert submit_nicas_variable("temperature", tmp_path, retries=2, poll_seconds=1) == "job2"
+    assert len(attempts) == 2
+    assert "Falha PBS/HOME na JACI, ressubmetendo variável temperature." in (
+        capsys.readouterr().out
+    )
+
+
+def test_nicas_home_failure_retry_is_limited(tmp_path, monkeypatch):
+    attempts = []
+    monkeypatch.setattr(
+        bcov,
+        "qsub",
+        lambda pbs_file, cwd: attempts.append(1) or f"job{len(attempts)}",
+    )
+    monkeypatch.setattr(
+        bcov,
+        "wait_for_pbs_job",
+        lambda jobid, poll_seconds: (tmp_path / f"NICAS_temperature.o{jobid}").write_text(
+            "Could not chdir to home directory\n"
+        ),
+    )
+
+    with pytest.raises(SystemExit, match="após 2 retries"):
+        submit_nicas_variable("temperature", tmp_path, retries=2, poll_seconds=1)
+    assert len(attempts) == 3
+
+
+def test_validate_nicas_reports_pbs_home_failure(tmp_path, capsys):
+    for variable in NICAS_VARIABLES:
+        run_dir = tmp_path / variable
+        run_dir.mkdir()
+        write_nicas_variable_products(run_dir)
+    (tmp_path / NICAS_VARIABLES[0] / "NICAS.o123").write_text(
+        "Could not chdir to home directory\n"
+    )
+    (tmp_path / "merge").mkdir()
+
+    with pytest.raises(SystemExit):
+        validate_nicas(tmp_path)
+    assert "falha PBS/HOME: Could not chdir to home directory" in capsys.readouterr().out
+    assert nicas_home_failure_files(tmp_path / NICAS_VARIABLES[0])
+
+
+def test_nicas_pbs_avoids_unsupported_jaci_directives(tmp_path, monkeypatch):
+    install = tmp_path / "install"
+    exe = install / "bin" / "mpasjedi_error_covariance_toolbox.x"
+    exe.parent.mkdir(parents=True)
+    exe.touch()
+    config = {
+        "project": {"project_root": str(tmp_path)},
+        "environment": {"loader": "load.sh"},
+        "install": {"root": str(install)},
+        "mesh": {"nproc": 2},
+        "pbs": {"queue": "queue", "walltime_short": "00:10:00"},
+    }
+    run_dir = tmp_path / "temperature"
+    run_dir.mkdir()
+
+    bcov.write_nicas_pbs(config, run_dir, "temperature")
+    bcov.write_nicas_merge_files(config, tmp_path)
+
+    texts = [
+        (run_dir / "qsub_nicas.bash").read_text(),
+        (tmp_path / "merge" / "qsub_nicas_merge.bash").read_text(),
+    ]
+    assert all("#PBS -d" not in text for text in texts)
+    assert all("%1" not in text for text in texts)
