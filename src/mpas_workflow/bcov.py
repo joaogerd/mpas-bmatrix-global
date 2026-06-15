@@ -2281,6 +2281,121 @@ def dirac_all_command(args) -> int:
     return 0
 
 
+def pipeline_workspaces(config, bflow_workspace_path: str | Path) -> dict[str, Path]:
+    bflow = Path(bflow_workspace_path)
+    vbal = vbal_workspace(config, bflow)
+    hdiag = hdiag_workspace(config, vbal)
+    nicas = nicas_workspace(config, hdiag)
+    return {
+        "bflow": bflow,
+        "vbal": vbal,
+        "hdiag": hdiag,
+        "nicas": nicas,
+        "so": so_workspace(config, nicas),
+        "dirac": dirac_workspace(config, nicas),
+    }
+
+
+def print_pipeline_summary(workspaces: dict[str, Path], statuses: dict[str, str]) -> None:
+    print("=== B-matrix pipeline summary ===")
+    for name in ["bflow", "vbal", "hdiag", "nicas", "so", "dirac"]:
+        status = statuses.get(name, "OK" if name == "bflow" else "PENDING")
+        print(f"{name.upper():6s} {status:8s} {workspaces[name]}")
+
+
+def pipeline_all_command(args) -> int:
+    if not args.bflow_workspace:
+        raise SystemExit("ERRO: pipeline-all requer --bflow-workspace.")
+
+    config = load_config(args.config)
+    workspaces = pipeline_workspaces(config, args.bflow_workspace)
+    statuses: dict[str, str] = {"bflow": "INPUT"}
+
+    if args.validate_only:
+        validate_vbal(workspaces["vbal"])
+        statuses["vbal"] = "OK"
+        validate_hdiag(workspaces["hdiag"])
+        statuses["hdiag"] = "OK"
+        validate_nicas(workspaces["nicas"])
+        statuses["nicas"] = "OK"
+        validate_so(workspaces["so"], variant="default")
+        statuses["so"] = "OK"
+        validate_dirac(workspaces["dirac"])
+        statuses["dirac"] = "OK"
+        print_pipeline_summary(workspaces, statuses)
+        return 0
+
+    vbal_root = prepare_vbal(
+        config,
+        workspaces["bflow"],
+        workspace=workspaces["vbal"],
+        clean=args.clean,
+    )
+    print(f"VBAL_JOBID={submit_vbal(vbal_root, wait=True, poll_seconds=args.poll_seconds)}")
+    validate_vbal(vbal_root)
+    statuses["vbal"] = "OK"
+
+    hdiag_root = prepare_hdiag(
+        config,
+        vbal_root,
+        workspace=workspaces["hdiag"],
+        clean=args.clean,
+    )
+    print(f"HDIAG_JOBID={submit_hdiag(hdiag_root, wait=True, poll_seconds=args.poll_seconds)}")
+    validate_hdiag(hdiag_root)
+    statuses["hdiag"] = "OK"
+
+    nicas_root = prepare_nicas(
+        config,
+        hdiag_root,
+        workspace=workspaces["nicas"],
+        clean=args.clean,
+    )
+    print(
+        "NICAS_MERGE_JOBID="
+        + submit_nicas(
+            nicas_root,
+            wait=True,
+            poll_seconds=args.poll_seconds,
+            retries=args.retries,
+        )
+    )
+    validate_nicas(nicas_root)
+    statuses["nicas"] = "OK"
+
+    so_root = prepare_so(
+        config,
+        nicas_root,
+        hdiag_workspace_path=hdiag_root,
+        vbal_workspace_path=vbal_root,
+        workspace=workspaces["so"],
+        clean=args.clean,
+        variant="default",
+    )
+    print(
+        f"SO_JOBID={submit_so(so_root, wait=True, poll_seconds=args.poll_seconds, retries=args.retries)}"
+    )
+    validate_so(so_root, variant="default")
+    statuses["so"] = "OK"
+
+    dirac_root = prepare_dirac(
+        config,
+        nicas_root,
+        hdiag_workspace_path=hdiag_root,
+        vbal_workspace_path=vbal_root,
+        workspace=workspaces["dirac"],
+        clean=args.clean,
+    )
+    print(
+        f"DIRAC_JOBID={submit_dirac(dirac_root, wait=True, poll_seconds=args.poll_seconds, retries=args.retries)}"
+    )
+    validate_dirac(dirac_root)
+    statuses["dirac"] = "OK"
+
+    print_pipeline_summary(workspaces, statuses)
+    return 0
+
+
 def parser():
     p = argparse.ArgumentParser(prog="mpasbcov", description="Executa etapas de calibração BUMP/SABER da B-matrix")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -2431,6 +2546,19 @@ def parser():
     dall.add_argument("--poll-seconds", type=int, default=30)
     dall.add_argument("--retries", type=int, default=2)
     dall.set_defaults(func=dirac_all_command)
+
+    pipeline = sub.add_parser("pipeline-all", help="Executa ou valida a cadeia VBAL->HDIAG->NICAS->SO->Dirac")
+    pipeline.add_argument("--config", default=DEFAULT_CONFIG)
+    pipeline.add_argument("--bflow-workspace")
+    pipeline.add_argument("--clean", action="store_true")
+    pipeline.add_argument("--poll-seconds", type=int, default=30)
+    pipeline.add_argument("--retries", type=int, default=2)
+    pipeline.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="Apenas valida workspaces existentes, sem preparar nem submeter jobs",
+    )
+    pipeline.set_defaults(func=pipeline_all_command)
 
     return p
 

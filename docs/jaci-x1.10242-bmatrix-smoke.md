@@ -176,6 +176,42 @@ O Dirac validado aplica impulso em `temperature` e escreve `mpas.dirac.nc`.
 
 ## Sequência operacional validada
 
+### Agregador seguro
+
+Depois que o Bflow gerou o workspace de entrada, a cadeia de covariância pode ser executada pelo agregador:
+
+```bash
+mpasbcov pipeline-all \
+  --config configs/jaci-x1.10242.yaml \
+  --bflow-workspace "$BFLOW" \
+  --clean \
+  --poll-seconds 30 \
+  --retries 2
+```
+
+Para validar uma cadeia já executada sem preparar, limpar ou submeter jobs:
+
+```bash
+mpasbcov pipeline-all \
+  --config configs/jaci-x1.10242.yaml \
+  --bflow-workspace "$BFLOW" \
+  --validate-only
+```
+
+O agregador resolve os workspaces esperados em sequência:
+
+```text
+vbal  = covariance/vbal/<BFLOW_NAME>
+hdiag = covariance/hdiag/<BFLOW_NAME>
+nicas = covariance/nicas/<BFLOW_NAME>
+so    = covariance/so/<BFLOW_NAME>
+dirac = covariance/dirac/<BFLOW_NAME>
+```
+
+O resumo final imprime cada workspace e o status da etapa.
+
+### Execução etapa a etapa
+
 ### Bflow
 
 ```bash
@@ -279,9 +315,7 @@ ad540b2 Make NICAS submission robust on JACI
 
 ## Próximos passos sugeridos
 
-1. Adicionar um comando agregador, por exemplo `mpasbcov pipeline-all`, para encadear as etapas já validadas.
-2. Melhorar a documentação dos argumentos de cada subcomando.
-3. Criar visualização simples do `mpas.dirac.nc` para inspeção espacial/vertical do impulso.
-4. Separar claramente smoke test de produção, aumentando número de membros apenas em configurações próprias de produção.
-5. Adicionar notas de troubleshooting para PBS/HOME, `air_pressure`, aliases de GeoVaLs e validação de logs.
-
+1. Melhorar a documentação dos argumentos de cada subcomando.
+2. Criar visualização simples do `mpas.dirac.nc` para inspeção espacial/vertical do impulso.
+3. Separar claramente smoke test de produção, aumentando número de membros apenas em configurações próprias de produção.
+4. Adicionar notas de troubleshooting para PBS/HOME, `air_pressure`, aliases de GeoVaLs e validação de logs.

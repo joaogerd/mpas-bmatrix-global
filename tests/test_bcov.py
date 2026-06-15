@@ -859,3 +859,170 @@ def test_parser_exposes_dirac_commands():
     assert command_parser.parse_args(
         ["dirac-submit", "--workspace", "/tmp/dirac"]
     ).func is bcov.dirac_submit_command
+
+
+def test_parser_exposes_pipeline_all():
+    args = bcov.parser().parse_args(
+        [
+            "pipeline-all",
+            "--config",
+            "config.yaml",
+            "--bflow-workspace",
+            "/work/bflow",
+            "--clean",
+            "--poll-seconds",
+            "5",
+            "--retries",
+            "4",
+            "--validate-only",
+        ]
+    )
+
+    assert args.func is bcov.pipeline_all_command
+    assert args.config == "config.yaml"
+    assert args.bflow_workspace == "/work/bflow"
+    assert args.clean
+    assert args.poll_seconds == 5
+    assert args.retries == 4
+    assert args.validate_only
+
+
+def test_pipeline_all_requires_bflow_workspace():
+    args = bcov.parser().parse_args(["pipeline-all", "--validate-only"])
+
+    with pytest.raises(SystemExit, match="--bflow-workspace"):
+        bcov.pipeline_all_command(args)
+
+
+def test_pipeline_validate_only_calls_only_validators(tmp_path, monkeypatch, capsys):
+    config = {"project": {"work_root": str(tmp_path / "work")}}
+    bflow = tmp_path / "bflow" / "np128_2026061000_2026061300"
+    calls = []
+
+    monkeypatch.setattr(bcov, "load_config", lambda path: config)
+    monkeypatch.setattr(bcov, "validate_vbal", lambda workspace: calls.append(("vbal", Path(workspace))))
+    monkeypatch.setattr(bcov, "validate_hdiag", lambda workspace: calls.append(("hdiag", Path(workspace))))
+    monkeypatch.setattr(bcov, "validate_nicas", lambda workspace: calls.append(("nicas", Path(workspace))))
+    monkeypatch.setattr(
+        bcov,
+        "validate_so",
+        lambda workspace, variant="default": calls.append(("so", Path(workspace), variant)),
+    )
+    monkeypatch.setattr(bcov, "validate_dirac", lambda workspace: calls.append(("dirac", Path(workspace))))
+    monkeypatch.setattr(
+        bcov,
+        "prepare_vbal",
+        lambda *args, **kwargs: pytest.fail("validate-only nao deve preparar"),
+    )
+    monkeypatch.setattr(
+        bcov,
+        "submit_vbal",
+        lambda *args, **kwargs: pytest.fail("validate-only nao deve submeter"),
+    )
+
+    args = bcov.parser().parse_args(
+        [
+            "pipeline-all",
+            "--config",
+            "config.yaml",
+            "--bflow-workspace",
+            str(bflow),
+            "--validate-only",
+        ]
+    )
+
+    assert bcov.pipeline_all_command(args) == 0
+
+    base = tmp_path / "work" / "bmatrix" / "covariance"
+    assert calls == [
+        ("vbal", base / "vbal" / bflow.name),
+        ("hdiag", base / "hdiag" / bflow.name),
+        ("nicas", base / "nicas" / bflow.name),
+        ("so", base / "so" / bflow.name, "default"),
+        ("dirac", base / "dirac" / bflow.name),
+    ]
+    assert "B-matrix pipeline summary" in capsys.readouterr().out
+
+
+def test_pipeline_all_runs_stages_in_order_without_real_pbs(tmp_path, monkeypatch):
+    config = {"project": {"work_root": str(tmp_path / "work")}}
+    bflow = tmp_path / "bflow" / "np128_2026061000_2026061300"
+    order = []
+
+    monkeypatch.setattr(bcov, "load_config", lambda path: config)
+
+    def record_prepare(name):
+        def inner(config_arg, input_workspace, **kwargs):
+            order.append((f"prepare_{name}", Path(input_workspace), Path(kwargs["workspace"]), kwargs.get("clean")))
+            return Path(kwargs["workspace"])
+
+        return inner
+
+    def record_submit(name, jobid):
+        def inner(workspace, **kwargs):
+            order.append((f"submit_{name}", Path(workspace), kwargs.get("wait"), kwargs.get("poll_seconds"), kwargs.get("retries")))
+            return jobid
+
+        return inner
+
+    def record_validate(name):
+        def inner(workspace, **kwargs):
+            order.append((f"validate_{name}", Path(workspace), kwargs.get("variant")))
+            return True
+
+        return inner
+
+    monkeypatch.setattr(bcov, "prepare_vbal", record_prepare("vbal"))
+    monkeypatch.setattr(bcov, "submit_vbal", record_submit("vbal", "vbaljob"))
+    monkeypatch.setattr(bcov, "validate_vbal", record_validate("vbal"))
+    monkeypatch.setattr(bcov, "prepare_hdiag", record_prepare("hdiag"))
+    monkeypatch.setattr(bcov, "submit_hdiag", record_submit("hdiag", "hdiagjob"))
+    monkeypatch.setattr(bcov, "validate_hdiag", record_validate("hdiag"))
+    monkeypatch.setattr(bcov, "prepare_nicas", record_prepare("nicas"))
+    monkeypatch.setattr(bcov, "submit_nicas", record_submit("nicas", "nicasjob"))
+    monkeypatch.setattr(bcov, "validate_nicas", record_validate("nicas"))
+    monkeypatch.setattr(bcov, "prepare_so", record_prepare("so"))
+    monkeypatch.setattr(bcov, "submit_so", record_submit("so", "sojob"))
+    monkeypatch.setattr(bcov, "validate_so", record_validate("so"))
+    monkeypatch.setattr(bcov, "prepare_dirac", record_prepare("dirac"))
+    monkeypatch.setattr(bcov, "submit_dirac", record_submit("dirac", "diracjob"))
+    monkeypatch.setattr(bcov, "validate_dirac", record_validate("dirac"))
+
+    args = bcov.parser().parse_args(
+        [
+            "pipeline-all",
+            "--config",
+            "config.yaml",
+            "--bflow-workspace",
+            str(bflow),
+            "--clean",
+            "--poll-seconds",
+            "7",
+            "--retries",
+            "3",
+        ]
+    )
+
+    assert bcov.pipeline_all_command(args) == 0
+
+    assert [entry[0] for entry in order] == [
+        "prepare_vbal",
+        "submit_vbal",
+        "validate_vbal",
+        "prepare_hdiag",
+        "submit_hdiag",
+        "validate_hdiag",
+        "prepare_nicas",
+        "submit_nicas",
+        "validate_nicas",
+        "prepare_so",
+        "submit_so",
+        "validate_so",
+        "prepare_dirac",
+        "submit_dirac",
+        "validate_dirac",
+    ]
+    submit_calls = [entry for entry in order if entry[0].startswith("submit_")]
+    assert all(call[2] is True for call in submit_calls)
+    assert all(call[3] == 7 for call in submit_calls)
+    assert [call[4] for call in submit_calls[-3:]] == [3, 3, 3]
