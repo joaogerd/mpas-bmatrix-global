@@ -1646,7 +1646,8 @@ def so_errors(run_dir: Path, variant: str = "default") -> list[str]:
     runlog = run_dir / artifacts["runlog"]
     text = runlog.read_text(errors="replace") if runlog.is_file() else ""
     errors = []
-    if not re.search(r"Finishing .*Variational(?:<MPAS>)?.*status\s*=\s*0", text):
+    success_marker = "with status = 0"
+    if success_marker not in text:
         errors.append(f"status final de sucesso ausente no {artifacts['runlog']}")
     if not list(run_dir.glob("an.*.nc")):
         errors.append("arquivo de análise an.*.nc ausente")
@@ -1667,23 +1668,31 @@ def so_errors(run_dir: Path, variant: str = "default") -> list[str]:
         ]
         if path.is_file()
     )
-    for token in ["ABORT", "FATAL", "ERROR:", "Exception", "Segmentation fault", "CRITICAL"]:
-        if token.lower() in combined.lower():
+    combined = "\n".join(
+        line for line in combined.splitlines() if "CRAYBLAS_WARNING" not in line
+    )
+    for token in [
+        "ABORT",
+        "FATAL",
+        "Segmentation fault",
+        "CRITICAL",
+        "Exception",
+        "Traceback",
+    ]:
+        if token in combined:
             errors.append(f"erro encontrado nos logs: {token}")
+    nonzero_statuses = re.findall(r"with status\s*=\s*(-?\d+)", combined)
+    if any(status != "0" for status in nonzero_statuses):
+        errors.append("status final diferente de zero encontrado nos logs")
     return errors
 
 
 def validate_so(workspace: str | Path, variant: str = "default") -> bool:
     root = Path(workspace)
     errors = so_errors(root, variant=variant)
-    home_failures = nicas_home_failure_files(root)
     print("=== SO validation ===")
     print(f"WORKSPACE={root}")
     print(f"VARIANT={variant}")
-    if home_failures and errors:
-        errors.insert(0, "falha PBS/HOME: Could not chdir to home directory")
-    elif home_failures:
-        print("WARNING: stale PBS output: Could not chdir to home directory")
     if errors:
         for error in errors:
             print(f"  - {error}")

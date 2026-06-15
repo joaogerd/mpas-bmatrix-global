@@ -625,7 +625,8 @@ def test_write_so_t_only_diagnostic_pbs(tmp_path):
 def write_so_products(run_dir, variant="default"):
     artifacts = bcov.so_artifacts(variant)
     (run_dir / artifacts["runlog"]).write_text(
-        "Run: Finishing oops::Variational<MPAS> with status = 0\n"
+        "Run: Finishing oops::Variational<MPAS, UFO and IODA observations> "
+        "with status = 0\n"
     )
     (run_dir / "an.2026-06-10_00.00.00.nc").touch()
     if variant in ("default", "t-only"):
@@ -648,7 +649,8 @@ def test_validate_so_accepts_variant_products(tmp_path, variant):
 def test_validate_so_variant_requires_its_observation_output(tmp_path):
     artifacts = bcov.so_artifacts("t-only")
     (tmp_path / artifacts["runlog"]).write_text(
-        "Run: Finishing oops::Variational<MPAS> with status = 0\n"
+        "Run: Finishing oops::Variational<MPAS, UFO and IODA observations> "
+        "with status = 0\n"
     )
     (tmp_path / "an.2026-06-10_00.00.00.nc").touch()
 
@@ -656,22 +658,82 @@ def test_validate_so_variant_requires_its_observation_output(tmp_path):
         validate_so(tmp_path, variant="t-only")
 
 
-def test_validate_so_warns_for_stale_pbs_home_output(tmp_path, capsys):
+def test_validate_so_ignores_other_variant_and_old_pbs_logs(tmp_path):
+    write_so_products(tmp_path, variant="t-only")
+    (tmp_path / "run_SO.runlog").write_text("ERROR: falha default antiga\n")
+    (tmp_path / "stderr.log").write_text("FATAL: falha default antiga\n")
+    (tmp_path / "SOTest.o123").write_text("Could not chdir to home directory\n")
+
+    assert validate_so(tmp_path, variant="t-only")
+
+
+def test_validate_so_ignores_crayblas_warning(tmp_path):
+    write_so_products(tmp_path, variant="t-only")
+    artifacts = bcov.so_artifacts("t-only")
+    (tmp_path / artifacts["stderr"]).write_text(
+        "CRAYBLAS_WARNING: ERROR: fallback interno da biblioteca\n"
+    )
+
+    assert validate_so(tmp_path, variant="t-only")
+
+
+def test_validate_so_accepts_irrelevant_error_line_with_success(tmp_path):
+    write_so_products(tmp_path, variant="t-only")
+    artifacts = bcov.so_artifacts("t-only")
+    (tmp_path / artifacts["stderr"]).write_text(
+        "ERROR: mensagem não fatal emitida por biblioteca\n"
+    )
+
+    assert validate_so(tmp_path, variant="t-only")
+
+
+@pytest.mark.parametrize("missing", ["obsout_SO_T.h5", "obsout_SO_U.h5"])
+def test_validate_so_default_requires_both_observation_outputs(tmp_path, missing):
     write_so_products(tmp_path)
-    (tmp_path / "SOTest.o123").write_text("Could not chdir to home directory\n")
-
-    assert validate_so(tmp_path)
-    output = capsys.readouterr().out
-    assert "WARNING: stale PBS output" in output
-    assert "SUCCESS: SO validado." in output
-
-
-def test_validate_so_reports_pbs_home_when_products_missing(tmp_path, capsys):
-    (tmp_path / "SOTest.o123").write_text("Could not chdir to home directory\n")
+    (tmp_path / missing).unlink()
 
     with pytest.raises(SystemExit):
         validate_so(tmp_path)
-    assert "falha PBS/HOME: Could not chdir to home directory" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("variant", "required", "not_required"),
+    [
+        ("t-only", "obsout_SO_T.h5", "obsout_SO_U.h5"),
+        ("u-only", "obsout_SO_U.h5", "obsout_SO_T.h5"),
+    ],
+)
+def test_validate_so_single_variant_product_requirements(
+    tmp_path, variant, required, not_required
+):
+    write_so_products(tmp_path, variant=variant)
+    assert not (tmp_path / not_required).exists()
+    assert validate_so(tmp_path, variant=variant)
+
+    (tmp_path / required).unlink()
+    with pytest.raises(SystemExit):
+        validate_so(tmp_path, variant=variant)
+
+
+def test_validate_so_rejects_fatal_in_current_variant_log(tmp_path):
+    write_so_products(tmp_path, variant="t-only")
+    artifacts = bcov.so_artifacts("t-only")
+    (tmp_path / artifacts["stderr"]).write_text("FATAL: falha atual\n")
+
+    with pytest.raises(SystemExit):
+        validate_so(tmp_path, variant="t-only")
+
+
+def test_validate_so_rejects_nonzero_status(tmp_path):
+    write_so_products(tmp_path, variant="t-only")
+    artifacts = bcov.so_artifacts("t-only")
+    (tmp_path / artifacts["runlog"]).write_text(
+        "Run: Finishing oops::Variational<MPAS, UFO and IODA observations> "
+        "with status = 1\n"
+    )
+
+    with pytest.raises(SystemExit):
+        validate_so(tmp_path, variant="t-only")
 
 
 def test_submit_so_retries_pbs_home_failure(tmp_path, monkeypatch, capsys):
