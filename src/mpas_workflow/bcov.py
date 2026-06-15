@@ -57,6 +57,54 @@ NICAS_DIRAC_POINTS = [
     (45.0, -45.0),
     (135.0, -45.0),
 ]
+DIRAC_LATS = [
+    30.31011691,
+    26.56505123,
+    35.68501691,
+    19.01699038,
+    19.44244244,
+    31.21645245,
+    -23.55867959,
+    40.74997906,
+    24.86999229,
+    -34.60250161,
+    28.6699929,
+    55.75216412,
+    41.10499615,
+    23.72305971,
+    30.04996035,
+    37.5663491,
+    22.4949693,
+    39.92889223,
+    -6.174417705,
+    33.98997825,
+    51.49999473,
+    35.67194277,
+]
+DIRAC_LONS = [
+    130.11182691,
+    -102.95294521,
+    139.7514074,
+    72.8569893,
+    -99.1309882,
+    121.4365047,
+    -46.62501998,
+    -73.98001693,
+    66.99000891,
+    -58.39753137,
+    77.23000403,
+    37.61552283,
+    29.01000159,
+    90.40857947,
+    31.24996822,
+    126.999731,
+    88.32467566,
+    116.3882857,
+    106.8294376,
+    -118.1799805,
+    -0.116721844,
+    51.42434403,
+]
 
 
 @dataclass(frozen=True)
@@ -111,6 +159,10 @@ def nicas_workspace(config, hdiag_workspace_path: str | Path) -> Path:
 
 def so_workspace(config, nicas_workspace_path: str | Path) -> Path:
     return covariance_root(config) / "so" / Path(nicas_workspace_path).name
+
+
+def dirac_workspace(config, nicas_workspace_path: str | Path) -> Path:
+    return covariance_root(config) / "dirac" / Path(nicas_workspace_path).name
 
 
 def toolbox_exe(config) -> Path:
@@ -1745,6 +1797,286 @@ def submit_so(
     raise AssertionError("loop de retry SO terminou inesperadamente")
 
 
+def write_dirac_yaml(
+    path: Path,
+    date: str,
+    nicas_dir: Path,
+    stddev_file: Path,
+    vbal_dir: Path,
+) -> None:
+    latitudes = ", ".join(str(value) for value in DIRAC_LATS)
+    longitudes = ", ".join(str(value) for value in DIRAC_LONS)
+    text = f"""geometry:
+  nml_file: "./namelist.atmosphere_240km"
+  streams_file: "./streams.atmosphere_240km"
+  deallocate non-da fields: true
+
+background:
+  state variables: &incvars
+  - uReconstructZonal
+  - uReconstructMeridional
+  - temperature
+  - spechum
+  - surface_pressure
+  filename: "./bg.nc"
+  date: &date '{date}'
+  stream name: control
+  transform model to analysis: false
+
+background error:
+  covariance model: SABER
+
+  saber central block:
+    saber block name: BUMP_NICAS
+    active variables: &ctlvars
+    - stream_function
+    - velocity_potential
+    - temperature
+    - spechum
+    - surface_pressure
+    read:
+      io:
+        data directory: {nicas_dir}
+        files prefix: mpas
+      drivers:
+        multivariate strategy: univariate
+        read local nicas: true
+      grids:
+      - model:
+          variables:
+          - stream_function
+          - velocity_potential
+          - temperature
+          - spechum
+      - model:
+          variables:
+          - surface_pressure
+
+  saber outer blocks:
+  - saber block name: StdDev
+    read:
+      model file:
+        filename: {stddev_file}
+        date: *date
+        stream name: control
+  - saber block name: BUMP_VerticalBalance
+    read:
+      io:
+        data directory: {vbal_dir}
+        files prefix: mpas
+      drivers:
+        read local sampling: true
+        read vertical balance: true
+      vertical balance:
+        vbal:
+        - balanced variable: velocity_potential
+          unbalanced variable: stream_function
+          diagonal regression: true
+        - balanced variable: temperature
+          unbalanced variable: stream_function
+        - balanced variable: surface_pressure
+          unbalanced variable: stream_function
+
+  linear variable change:
+    linear variable change name: Control2Analysis
+    input variables: *ctlvars
+    output variables: *incvars
+
+dirac:
+  ndir: 1
+  dirLats: [{latitudes}]
+  dirLons: [{longitudes}]
+  ildir: 10
+  dirvar: temperature
+
+output dirac:
+  filename: "./mpas.dirac.nc"
+  date: *date
+  stream name: control
+"""
+    write_text(path, text)
+
+
+def write_dirac_pbs(config, run_dir: Path) -> None:
+    nproc = int(config["mesh"].get("nproc", config["pbs"].get("nproc", 64)))
+    queue = config["pbs"].get("queues", {}).get(
+        "bmatrix", config["pbs"].get("queue", "pesqmini")
+    )
+    walltime = config["pbs"].get("walltime", {}).get(
+        "bmatrix", config["pbs"].get("walltime_short", "00:10:00")
+    )
+    project_root = config["project"]["project_root"]
+    loader = config["environment"]["loader"]
+    exe = toolbox_exe(config)
+    text = f"""#!/bin/bash
+#PBS -N DiracTest
+#PBS -q {queue}
+#PBS -l select=1:ncpus={nproc}:mpiprocs={nproc}
+#PBS -l walltime={walltime}
+#PBS -j oe
+
+set -euo pipefail
+source "{project_root}/{loader}"
+cd "{run_dir}"
+export OMP_NUM_THREADS=1
+export GFORTRAN_CONVERT_UNIT=big_endian:101-200
+export FI_CXI_RX_MATCH_MODE=hybrid
+ulimit -s unlimited || true
+
+rm -f run_dirac.runlog stdout.log stderr.log mpas.dirac.nc
+mpiexec -n {nproc} {exe} ./run_dirac.yaml ./run_dirac.runlog > stdout.log 2> stderr.log
+"""
+    write_text(run_dir / "qsub_dirac.bash", text)
+
+
+def prepare_dirac(
+    config,
+    nicas_workspace_path: str | Path,
+    hdiag_workspace_path: str | Path | None = None,
+    vbal_workspace_path: str | Path | None = None,
+    workspace: str | Path | None = None,
+    clean: bool = False,
+) -> Path:
+    nicas_root = Path(nicas_workspace_path)
+    hdiag_root = (
+        Path(hdiag_workspace_path)
+        if hdiag_workspace_path
+        else workspace_from_readme(nicas_root, "HDIAG workspace")
+    )
+    if hdiag_root is None:
+        raise SystemExit("ERRO: informe --hdiag-workspace; metadata NICAS não contém o caminho.")
+    vbal_root = (
+        Path(vbal_workspace_path)
+        if vbal_workspace_path
+        else workspace_from_readme(hdiag_root, "VBAL workspace")
+    )
+    if vbal_root is None:
+        raise SystemExit("ERRO: informe --vbal-workspace; metadata HDIAG não contém o caminho.")
+
+    validate_nicas(nicas_root)
+    validate_hdiag(hdiag_root)
+    validate_vbal(vbal_root)
+    nicas_dir = nicas_root / "merge"
+    hdiag_run = hdiag_root / "HDIAG"
+    vbal_run = vbal_root / "VBAL"
+    require_file(nicas_dir / "mpas_nicas.nc", "NICAS global mesclado")
+    stddev = require_file(hdiag_run / "mpas.stddev.nc", "StdDev HDIAG")
+    require_file(vbal_run / "mpas_vbal.nc", "VBAL global")
+    require_file(vbal_run / "mpas_sampling.nc", "sampling VBAL global")
+
+    out = Path(workspace) if workspace else dirac_workspace(config, nicas_root)
+    if clean and out.exists():
+        shutil.rmtree(out)
+    out.mkdir(parents=True, exist_ok=True)
+    link_nicas_support(hdiag_run, out)
+    write_dirac_yaml(
+        out / "run_dirac.yaml",
+        hdiag_date(hdiag_root),
+        nicas_dir,
+        stddev,
+        vbal_run,
+    )
+    write_dirac_pbs(config, out)
+    write_text(
+        out / "README.md",
+        "\n".join(
+            [
+                "# Dirac workspace",
+                "",
+                f"NICAS workspace: `{nicas_root}`",
+                f"HDIAG workspace: `{hdiag_root}`",
+                f"VBAL workspace: `{vbal_root}`",
+                "",
+            ]
+        ),
+    )
+    print("=== Dirac workspace ===")
+    print(f"WORKSPACE={out}")
+    print(f"YAML={out / 'run_dirac.yaml'}")
+    print(f"PBS={out / 'qsub_dirac.bash'}")
+    return out
+
+
+def dirac_errors(run_dir: Path) -> list[str]:
+    runlog = run_dir / "run_dirac.runlog"
+    text = runlog.read_text(errors="replace") if runlog.is_file() else ""
+    errors = []
+    if "with status = 0" not in text:
+        errors.append("status final de sucesso ausente no run_dirac.runlog")
+    if not (run_dir / "mpas.dirac.nc").is_file():
+        errors.append("produto Dirac ausente: mpas.dirac.nc")
+
+    combined = "\n".join(
+        path.read_text(errors="replace")
+        for path in [runlog, run_dir / "stdout.log", run_dir / "stderr.log"]
+        if path.is_file()
+    )
+    combined = "\n".join(
+        line for line in combined.splitlines() if "CRAYBLAS_WARNING" not in line
+    )
+    for token in [
+        "ABORT",
+        "FATAL",
+        "Segmentation fault",
+        "CRITICAL",
+        "Exception",
+        "Traceback",
+    ]:
+        if token in combined:
+            errors.append(f"erro encontrado nos logs: {token}")
+    statuses = re.findall(r"with status\s*=\s*(-?\d+)", combined)
+    if any(status != "0" for status in statuses):
+        errors.append("status final diferente de zero encontrado nos logs")
+    return errors
+
+
+def validate_dirac(workspace: str | Path) -> bool:
+    root = Path(workspace)
+    errors = dirac_errors(root)
+    print("=== Dirac validation ===")
+    print(f"WORKSPACE={root}")
+    if errors:
+        for error in errors:
+            print(f"  - {error}")
+        raise SystemExit("ERRO: Dirac falhou ou ficou incompleto.")
+    print("SUCCESS: Dirac validado.")
+    return True
+
+
+def clean_dirac_outputs(run_dir: Path) -> None:
+    for name in ["run_dirac.runlog", "stdout.log", "stderr.log", "mpas.dirac.nc"]:
+        (run_dir / name).unlink(missing_ok=True)
+
+
+def submit_dirac(
+    workspace: str | Path,
+    wait: bool = False,
+    poll_seconds: int = 30,
+    retries: int = 2,
+) -> str:
+    run_dir = Path(workspace)
+    retries = max(0, retries)
+    for attempt in range(retries + 1):
+        clean_dirac_outputs(run_dir)
+        for path in nicas_home_failure_files(run_dir):
+            path.unlink()
+        jobid = qsub("qsub_dirac.bash", run_dir)
+        write_text(run_dir / "job_id.txt", jobid + "\n")
+        if not wait:
+            return jobid
+        wait_for_pbs_job(jobid, poll_seconds=poll_seconds)
+        if nicas_home_failure_files(run_dir):
+            if attempt < retries:
+                print("Falha PBS/HOME na JACI, ressubmetendo etapa Dirac.")
+                continue
+            raise SystemExit(
+                f"ERRO: falha PBS/HOME persistiu no Dirac após {retries} retries."
+            )
+        validate_dirac(run_dir)
+        return jobid
+    raise AssertionError("loop de retry Dirac terminou inesperadamente")
+
+
 def vbal_prepare_command(args) -> int:
     config = load_config(args.config)
     prepare_vbal(config, args.bflow_workspace, workspace=args.workspace, clean=args.clean)
@@ -1900,6 +2232,55 @@ def so_all_command(args) -> int:
     return 0
 
 
+def dirac_prepare_command(args) -> int:
+    config = load_config(args.config)
+    prepare_dirac(
+        config,
+        args.nicas_workspace,
+        hdiag_workspace_path=args.hdiag_workspace,
+        vbal_workspace_path=args.vbal_workspace,
+        workspace=args.workspace,
+        clean=args.clean,
+    )
+    return 0
+
+
+def dirac_submit_command(args) -> int:
+    jobid = submit_dirac(
+        args.workspace,
+        wait=args.wait,
+        poll_seconds=args.poll_seconds,
+        retries=args.retries,
+    )
+    print(f"JOBID={jobid}")
+    return 0
+
+
+def dirac_validate_command(args) -> int:
+    validate_dirac(args.workspace)
+    return 0
+
+
+def dirac_all_command(args) -> int:
+    config = load_config(args.config)
+    workspace = prepare_dirac(
+        config,
+        args.nicas_workspace,
+        hdiag_workspace_path=args.hdiag_workspace,
+        vbal_workspace_path=args.vbal_workspace,
+        workspace=args.workspace,
+        clean=args.clean,
+    )
+    jobid = submit_dirac(
+        workspace,
+        wait=True,
+        poll_seconds=args.poll_seconds,
+        retries=args.retries,
+    )
+    print(f"JOBID={jobid}")
+    return 0
+
+
 def parser():
     p = argparse.ArgumentParser(prog="mpasbcov", description="Executa etapas de calibração BUMP/SABER da B-matrix")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -2019,6 +2400,37 @@ def parser():
     soall.add_argument("--variant", choices=SO_VARIANTS, default="default")
     soall.add_argument("--debug-core", action="store_true")
     soall.set_defaults(func=so_all_command)
+
+    dprep = sub.add_parser("dirac-prepare", help="Prepara teste Dirac da B-matrix")
+    dprep.add_argument("--config", default=DEFAULT_CONFIG)
+    dprep.add_argument("--nicas-workspace", required=True)
+    dprep.add_argument("--hdiag-workspace")
+    dprep.add_argument("--vbal-workspace")
+    dprep.add_argument("--workspace")
+    dprep.add_argument("--clean", action="store_true")
+    dprep.set_defaults(func=dirac_prepare_command)
+
+    dsubmit = sub.add_parser("dirac-submit", help="Submete teste Dirac")
+    dsubmit.add_argument("--workspace", required=True)
+    dsubmit.add_argument("--wait", action="store_true")
+    dsubmit.add_argument("--poll-seconds", type=int, default=30)
+    dsubmit.add_argument("--retries", type=int, default=2)
+    dsubmit.set_defaults(func=dirac_submit_command)
+
+    dvalidate = sub.add_parser("dirac-validate", help="Valida teste Dirac")
+    dvalidate.add_argument("--workspace", required=True)
+    dvalidate.set_defaults(func=dirac_validate_command)
+
+    dall = sub.add_parser("dirac-all", help="Prepara, submete, espera e valida Dirac")
+    dall.add_argument("--config", default=DEFAULT_CONFIG)
+    dall.add_argument("--nicas-workspace", required=True)
+    dall.add_argument("--hdiag-workspace")
+    dall.add_argument("--vbal-workspace")
+    dall.add_argument("--workspace")
+    dall.add_argument("--clean", action="store_true")
+    dall.add_argument("--poll-seconds", type=int, default=30)
+    dall.add_argument("--retries", type=int, default=2)
+    dall.set_defaults(func=dirac_all_command)
 
     return p
 

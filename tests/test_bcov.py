@@ -14,11 +14,14 @@ from mpas_workflow.bcov import (
     submit_nicas,
     submit_nicas_variable,
     submit_so,
+    validate_dirac,
     validate_hdiag,
     validate_nicas,
     validate_so,
     validate_so_background,
     validate_vbal,
+    write_dirac_pbs,
+    write_dirac_yaml,
     write_hdiag_yaml,
     write_nicas_yaml,
     write_so_pbs,
@@ -768,3 +771,91 @@ def test_submit_so_uses_variant_pbs(tmp_path, monkeypatch):
 
     assert submit_so(tmp_path, variant="u-only") == "job1"
     assert submitted == [("qsub_so_u_only.bash", tmp_path)]
+
+
+def test_write_dirac_yaml_reads_validated_covariance_products(tmp_path):
+    output = tmp_path / "run_dirac.yaml"
+    nicas = tmp_path / "nicas" / "merge"
+    stddev = tmp_path / "hdiag" / "HDIAG" / "mpas.stddev.nc"
+    vbal = tmp_path / "vbal" / "VBAL"
+
+    write_dirac_yaml(
+        output,
+        date="2026-06-10T00:00:00Z",
+        nicas_dir=nicas,
+        stddev_file=stddev,
+        vbal_dir=vbal,
+    )
+
+    text = output.read_text()
+    assert "saber block name: BUMP_NICAS" in text
+    assert f"data directory: {nicas}" in text
+    assert "read local nicas: true" in text
+    assert "saber block name: StdDev" in text
+    assert f"filename: {stddev}" in text
+    assert "saber block name: BUMP_VerticalBalance" in text
+    assert f"data directory: {vbal}" in text
+    assert "read local sampling: true" in text
+    assert "read vertical balance: true" in text
+    assert "linear variable change name: Control2Analysis" in text
+    assert 'filename: "./bg.nc"' in text
+    assert "transform model to analysis: false" in text
+    assert "dirvar: temperature" in text
+    assert 'filename: "./mpas.dirac.nc"' in text
+
+
+def test_write_dirac_pbs_uses_toolbox_and_mesh_rank_count(tmp_path):
+    install = tmp_path / "install"
+    exe = install / "bin" / "mpasjedi_error_covariance_toolbox.x"
+    exe.parent.mkdir(parents=True)
+    exe.touch()
+    run_dir = tmp_path / "Dirac"
+    run_dir.mkdir()
+    config = {
+        "project": {"project_root": str(tmp_path)},
+        "environment": {"loader": "load.sh"},
+        "install": {"root": str(install)},
+        "mesh": {"nproc": 128},
+        "pbs": {"queue": "queue", "walltime_short": "00:10:00"},
+    }
+
+    write_dirac_pbs(config, run_dir)
+
+    text = (run_dir / "qsub_dirac.bash").read_text()
+    assert str(exe) in text
+    assert f'cd "{run_dir}"' in text
+    assert "#PBS -l select=1:ncpus=128:mpiprocs=128" in text
+    assert "mpiexec -n 128" in text
+    assert "./run_dirac.yaml ./run_dirac.runlog" in text
+    assert "GFORTRAN_CONVERT_UNIT=big_endian:101-200" in text
+    assert "#PBS -d" not in text
+    assert "#PBS -J" not in text
+
+
+def test_validate_dirac_accepts_status_and_output(tmp_path):
+    (tmp_path / "run_dirac.runlog").write_text(
+        "Run: Finishing oops::ErrorCovarianceToolbox<MPAS> with status = 0\n"
+    )
+    (tmp_path / "mpas.dirac.nc").touch()
+
+    assert validate_dirac(tmp_path)
+
+
+def test_validate_dirac_requires_output(tmp_path):
+    (tmp_path / "run_dirac.runlog").write_text(
+        "Run: Finishing oops::ErrorCovarianceToolbox<MPAS> with status = 0\n"
+    )
+
+    with pytest.raises(SystemExit, match="Dirac falhou"):
+        validate_dirac(tmp_path)
+
+
+def test_parser_exposes_dirac_commands():
+    command_parser = bcov.parser()
+
+    assert command_parser.parse_args(
+        ["dirac-validate", "--workspace", "/tmp/dirac"]
+    ).func is bcov.dirac_validate_command
+    assert command_parser.parse_args(
+        ["dirac-submit", "--workspace", "/tmp/dirac"]
+    ).func is bcov.dirac_submit_command
