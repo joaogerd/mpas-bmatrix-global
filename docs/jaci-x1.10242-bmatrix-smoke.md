@@ -286,6 +286,12 @@ python -m mpas_workflow.bcov dirac-validate \
   --workspace "$DIRAC"
 ```
 
+Resumo diagnóstico do produto Dirac:
+
+```bash
+mpasbcov dirac-summary --workspace "$DIRAC"
+```
+
 ## Estado final validado
 
 ```text

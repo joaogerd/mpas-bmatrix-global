@@ -861,6 +861,89 @@ def test_parser_exposes_dirac_commands():
     ).func is bcov.dirac_submit_command
 
 
+def test_parser_exposes_dirac_summary():
+    args = bcov.parser().parse_args(
+        ["dirac-summary", "--workspace", "/tmp/dirac", "--csv", "/tmp/dirac.csv"]
+    )
+
+    assert args.func is bcov.dirac_summary_command
+    assert args.workspace == "/tmp/dirac"
+    assert args.csv == "/tmp/dirac.csv"
+
+
+def test_dirac_summary_missing_file_fails(tmp_path):
+    with pytest.raises(SystemExit, match="produto Dirac ausente"):
+        bcov.summarize_dirac(tmp_path)
+
+
+def test_dirac_summary_reports_numeric_variables(tmp_path, capsys):
+    netCDF4 = pytest.importorskip("netCDF4")
+    workspace = tmp_path / "dirac"
+    workspace.mkdir()
+    with netCDF4.Dataset(workspace / "mpas.dirac.nc", "w") as dataset:
+        dataset.createDimension("nCells", 3)
+        temperature = dataset.createVariable("temperature", "f4", ("nCells",))
+        temperature[:] = [1.0, -2.0, float("nan")]
+        dataset.createVariable("category", str, ("nCells",))
+
+    rows = bcov.summarize_dirac(workspace)
+    bcov.print_dirac_summary(rows)
+
+    assert rows == [
+        {
+            "variable": "temperature",
+            "shape": "3",
+            "min": -2.0,
+            "max": 1.0,
+            "mean": -0.5,
+            "rms": pytest.approx((5.0 / 2.0) ** 0.5),
+            "max_abs": 2.0,
+            "nonzero_count": 2,
+        }
+    ]
+    output = capsys.readouterr().out
+    assert "variable shape min max mean rms max_abs nonzero_count" in output
+    assert "temperature 3 -2 1 -0.5" in output
+
+
+def test_dirac_summary_reports_zero_nonzero_count(tmp_path):
+    netCDF4 = pytest.importorskip("netCDF4")
+    workspace = tmp_path / "dirac"
+    workspace.mkdir()
+    with netCDF4.Dataset(workspace / "mpas.dirac.nc", "w") as dataset:
+        dataset.createDimension("nCells", 2)
+        values = dataset.createVariable("surface_pressure", "f4", ("nCells",))
+        values[:] = [0.0, 0.0]
+
+    rows = bcov.summarize_dirac(workspace)
+
+    assert rows[0]["variable"] == "surface_pressure"
+    assert rows[0]["nonzero_count"] == 0
+    assert rows[0]["rms"] == 0.0
+    assert rows[0]["max_abs"] == 0.0
+
+
+def test_dirac_summary_writes_csv(tmp_path):
+    netCDF4 = pytest.importorskip("netCDF4")
+    workspace = tmp_path / "dirac"
+    workspace.mkdir()
+    with netCDF4.Dataset(workspace / "mpas.dirac.nc", "w") as dataset:
+        dataset.createDimension("nCells", 2)
+        values = dataset.createVariable("spechum", "f4", ("nCells",))
+        values[:] = [0.0, 3.0]
+
+    csv_path = tmp_path / "summary.csv"
+    args = bcov.parser().parse_args(
+        ["dirac-summary", "--workspace", str(workspace), "--csv", str(csv_path)]
+    )
+
+    assert bcov.dirac_summary_command(args) == 0
+
+    text = csv_path.read_text()
+    assert "variable,shape,min,max,mean,rms,max_abs,nonzero_count" in text
+    assert "spechum,2,0.0,3.0,1.5" in text
+
+
 def test_parser_exposes_pipeline_all():
     args = bcov.parser().parse_args(
         [

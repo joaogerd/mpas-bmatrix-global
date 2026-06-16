@@ -2043,6 +2043,85 @@ def validate_dirac(workspace: str | Path) -> bool:
     return True
 
 
+def _format_number(value: float) -> str:
+    if value != value:
+        return "nan"
+    return f"{value:.12g}"
+
+
+def summarize_dirac(workspace: str | Path) -> list[dict[str, object]]:
+    path = Path(workspace) / "mpas.dirac.nc"
+    if not path.is_file():
+        raise SystemExit(f"ERRO: produto Dirac ausente: {path}")
+    try:
+        import netCDF4
+        import numpy as np
+    except ImportError as exc:
+        raise SystemExit("ERRO: dirac-summary requer os módulos Python netCDF4 e numpy.") from exc
+
+    rows: list[dict[str, object]] = []
+    with netCDF4.Dataset(path) as dataset:
+        for name, variable in dataset.variables.items():
+            if not np.issubdtype(np.dtype(variable.dtype), np.number):
+                continue
+            values = np.ma.asarray(variable[:], dtype=float).filled(np.nan).ravel()
+            finite = values[~np.isnan(values)]
+            if finite.size == 0:
+                vmin = vmax = mean = rms = max_abs = float("nan")
+                nonzero_count = 0
+            else:
+                vmin = float(np.min(finite))
+                vmax = float(np.max(finite))
+                mean = float(np.mean(finite))
+                rms = float(np.sqrt(np.mean(finite * finite)))
+                max_abs = float(np.max(np.abs(finite)))
+                nonzero_count = int(np.count_nonzero(finite))
+            rows.append(
+                {
+                    "variable": name,
+                    "shape": "x".join(str(size) for size in variable.shape) or "scalar",
+                    "min": vmin,
+                    "max": vmax,
+                    "mean": mean,
+                    "rms": rms,
+                    "max_abs": max_abs,
+                    "nonzero_count": nonzero_count,
+                }
+            )
+    if not rows:
+        raise SystemExit(f"ERRO: nenhuma variável numérica útil encontrada em {path}")
+    return rows
+
+
+def print_dirac_summary(rows: list[dict[str, object]]) -> None:
+    columns = ["variable", "shape", "min", "max", "mean", "rms", "max_abs", "nonzero_count"]
+    print(" ".join(columns))
+    for row in rows:
+        print(
+            " ".join(
+                [
+                    str(row["variable"]),
+                    str(row["shape"]),
+                    _format_number(float(row["min"])),
+                    _format_number(float(row["max"])),
+                    _format_number(float(row["mean"])),
+                    _format_number(float(row["rms"])),
+                    _format_number(float(row["max_abs"])),
+                    str(row["nonzero_count"]),
+                ]
+            )
+        )
+
+
+def write_dirac_summary_csv(path: str | Path, rows: list[dict[str, object]]) -> None:
+    columns = ["variable", "shape", "min", "max", "mean", "rms", "max_abs", "nonzero_count"]
+    with Path(path).open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=columns)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+
+
 def clean_dirac_outputs(run_dir: Path) -> None:
     for name in ["run_dirac.runlog", "stdout.log", "stderr.log", "mpas.dirac.nc"]:
         (run_dir / name).unlink(missing_ok=True)
@@ -2258,6 +2337,15 @@ def dirac_submit_command(args) -> int:
 
 def dirac_validate_command(args) -> int:
     validate_dirac(args.workspace)
+    return 0
+
+
+def dirac_summary_command(args) -> int:
+    rows = summarize_dirac(args.workspace)
+    print_dirac_summary(rows)
+    if args.csv:
+        write_dirac_summary_csv(args.csv, rows)
+        print(f"CSV={args.csv}")
     return 0
 
 
@@ -2535,6 +2623,11 @@ def parser():
     dvalidate = sub.add_parser("dirac-validate", help="Valida teste Dirac")
     dvalidate.add_argument("--workspace", required=True)
     dvalidate.set_defaults(func=dirac_validate_command)
+
+    dsummary = sub.add_parser("dirac-summary", help="Resume variáveis numéricas de mpas.dirac.nc")
+    dsummary.add_argument("--workspace", required=True)
+    dsummary.add_argument("--csv", help="Arquivo CSV opcional para salvar a tabela")
+    dsummary.set_defaults(func=dirac_summary_command)
 
     dall = sub.add_parser("dirac-all", help="Prepara, submete, espera e valida Dirac")
     dall.add_argument("--config", default=DEFAULT_CONFIG)
