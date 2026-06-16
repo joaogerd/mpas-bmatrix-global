@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import contextlib
 import csv
+import html
 import io
+import os
 import re
 import shutil
 import subprocess
@@ -3052,6 +3054,78 @@ def write_bmatrix_report(
     return output
 
 
+def _relative_link(target: Path, base_dir: Path) -> str:
+    return Path(os.path.relpath(target, base_dir)).as_posix()
+
+
+def write_report_html_index(
+    path: str | Path,
+    report_md: str | Path,
+    figures_dirs: list[str | Path],
+    title: str,
+) -> Path:
+    path = Path(path)
+    report_md = Path(report_md)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    figures = []
+    for directory in figures_dirs or []:
+        directory = Path(directory)
+        if directory.is_dir():
+            figures.extend(sorted(directory.rglob("*.png")))
+    figures = sorted(set(figures))
+    report_link = _relative_link(report_md, path.parent)
+    rows = [
+        "<!doctype html>",
+        "<html>",
+        "<head>",
+        '<meta charset="utf-8">',
+        f"<title>{html.escape(title)}</title>",
+        "<style>",
+        "body{font-family:Arial,sans-serif;margin:24px;}",
+        "img{max-width:1100px;width:100%;border:1px solid #ddd;margin:8px 0 28px 0;}",
+        "code{background:#eee;padding:2px 4px;}",
+        ".section{margin-bottom:32px;}",
+        "</style>",
+        "</head>",
+        "<body>",
+        f"<h1>{html.escape(title)}</h1>",
+        f"<p>Generated: <code>{html.escape(datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'))}</code></p>",
+        f'<p>Markdown report: <a href="{html.escape(report_link)}">{html.escape(report_md.name)}</a></p>',
+        '<div class="section">',
+        "<h2>Figure directories</h2>",
+        "<ul>",
+    ]
+    for directory in figures_dirs or []:
+        rows.append(f"<li><code>{html.escape(str(directory))}</code></li>")
+    rows.extend(["</ul>", "</div>", '<div class="section">', "<h2>Figures</h2>"])
+    if figures:
+        for figure in figures:
+            rel = _relative_link(figure, path.parent)
+            rows.extend(
+                [
+                    f"<h3>{html.escape(rel)}</h3>",
+                    f'<img src="{html.escape(rel)}" alt="{html.escape(rel)}">',
+                ]
+            )
+    else:
+        rows.append("<p>No PNG figures found.</p>")
+    rows.extend(
+        [
+            "</div>",
+            '<div class="section">',
+            "<h2>Notes</h2>",
+            "<p>This report is for the B-matrix smoke test. "
+            "It is not a final production statistical estimate.</p>",
+            "</div>",
+            "</body>",
+            "</html>",
+            "",
+        ]
+    )
+    write_text(path, "\n".join(rows))
+    return path
+
+
 def pipeline_all_command(args) -> int:
     if not args.bflow_workspace:
         raise SystemExit("ERRO: pipeline-all requer --bflow-workspace.")
@@ -3167,6 +3241,14 @@ def report_command(args) -> int:
         strict=args.strict,
     )
     print(f"REPORT={path}")
+    if not args.no_html_index:
+        html_index = write_report_html_index(
+            Path(path).with_name("index.html"),
+            path,
+            args.figures_dir,
+            args.title,
+        )
+        print(f"HTML_INDEX={html_index}")
     return 0
 
 
@@ -3392,6 +3474,7 @@ def parser():
     report.add_argument("--output")
     report.add_argument("--title", default="B-matrix smoke report")
     report.add_argument("--strict", action="store_true")
+    report.add_argument("--no-html-index", action="store_true")
     report.set_defaults(func=report_command)
 
     return p

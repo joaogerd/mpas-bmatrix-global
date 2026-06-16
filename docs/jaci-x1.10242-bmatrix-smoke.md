@@ -316,7 +316,7 @@ mpasbcov nicas-plot --workspace "$NICAS" --level 30 --output-dir "$NICAS/figures
 mpasbcov vbal-plot  --workspace "$VBAL"  --output-dir "$VBAL/figures"
 ```
 
-Relatório Markdown consolidado do smoke test:
+Relatório consolidado do smoke test. O comando escreve `report.md` e, por padrão, também cria `index.html` no mesmo diretório para navegar pelas figuras PNG:
 
 ```bash
 mpasbcov report \
@@ -333,6 +333,8 @@ mpasbcov report \
   --figures-dir "$DIRAC/figures" \
   --output "$DIRAC/report.md"
 ```
+
+Para inspecionar localmente, baixe o diretório com `report.md`, `index.html` e os subdiretórios de figuras, então abra `index.html` no navegador.
 
 ## Estado final validado
 

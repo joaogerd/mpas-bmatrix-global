@@ -1181,12 +1181,14 @@ def test_parser_exposes_report():
             "/tmp/report.md",
             "--title",
             "Smoke Report",
+            "--no-html-index",
         ]
     )
 
     assert args.func is bcov.report_command
     assert args.figures_dir == ["/tmp/figures"]
     assert args.title == "Smoke Report"
+    assert args.no_html_index
 
 
 def test_report_writes_markdown_with_workspaces_products_and_figures(tmp_path):
@@ -1214,6 +1216,58 @@ def test_report_writes_markdown_with_workspaces_products_and_figures(tmp_path):
     assert "mpas.dirac.nc" in text
     assert "dirac_temperature.png" in text
     assert "SKIP" in text
+
+
+def test_report_command_writes_html_index_by_default(tmp_path):
+    dirac = tmp_path / "dirac"
+    figures = tmp_path / "figures"
+    nested = figures / "hdiag"
+    dirac.mkdir()
+    nested.mkdir(parents=True)
+    (dirac / "mpas.dirac.nc").touch()
+    (nested / "hdiag_temperature.png").touch()
+    output = dirac / "report.md"
+
+    args = bcov.parser().parse_args(
+        [
+            "report",
+            "--dirac-workspace",
+            str(dirac),
+            "--figures-dir",
+            str(figures),
+            "--output",
+            str(output),
+            "--title",
+            "Smoke Report",
+        ]
+    )
+
+    assert bcov.report_command(args) == 0
+
+    html = dirac / "index.html"
+    text = html.read_text()
+    assert html.is_file()
+    assert 'href="report.md"' in text
+    assert "hdiag_temperature.png" in text
+    assert "<img" in text
+    assert "smoke test" in text
+
+
+def test_report_command_no_html_index(tmp_path):
+    output = tmp_path / "report.md"
+    args = bcov.parser().parse_args(
+        [
+            "report",
+            "--output",
+            str(output),
+            "--no-html-index",
+        ]
+    )
+
+    assert bcov.report_command(args) == 0
+
+    assert output.is_file()
+    assert not (tmp_path / "index.html").exists()
 
 
 def test_report_strict_fails_on_validation_failure(tmp_path):
