@@ -7,10 +7,22 @@ from datetime import datetime
 from pathlib import Path
 
 LAT_BANDS = [(-90, -60), (-60, -30), (-30, 0), (0, 30), (30, 60), (60, 90)]
+DEFAULT_PAIRS = {
+    "stream_function-velocity_potential",
+    "stream_function-temperature",
+    "stream_function-surface_pressure",
+}
+DEFAULT_PRODUCTS = {"explained", "reg"}
 
 
 def safe_stem(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("_") or "field"
+
+
+def parse_csv_set(value: str | None) -> set[str]:
+    if not value:
+        return set()
+    return {item.strip() for item in value.split(",") if item.strip()}
 
 
 def iter_group_variables(group, prefix: str = ""):
@@ -41,6 +53,25 @@ def load_lat_c2(workspace: Path):
     return lat
 
 
+def product_kind(variable_name: str) -> str | None:
+    if variable_name.startswith("explained_var"):
+        return "explained"
+    if variable_name.startswith("reg"):
+        return "reg"
+    if variable_name.startswith("cov"):
+        return "cov"
+    return None
+
+
+def should_process(group_name: str, variable_name: str, pairs: set[str], products: set[str]) -> bool:
+    kind = product_kind(variable_name)
+    if kind is None:
+        return False
+    if pairs and group_name not in pairs:
+        return False
+    return kind in products
+
+
 def diagonal_levels(values):
     import numpy as np
 
@@ -61,7 +92,7 @@ def matrix_mean(values, lat=None, band=None):
         return None
     if lat is not None and band is not None:
         lo, hi = band
-        mask = (lat >= lo) & (lat < hi if hi < 90 else lat <= hi)
+        mask = (lat >= lo) & ((lat < hi) if hi < 90 else (lat <= hi))
         if not np.any(mask):
             return None
         arr = arr[:, :, mask]
@@ -71,7 +102,7 @@ def matrix_mean(values, lat=None, band=None):
 def band_masks(lat):
     masks = []
     for lo, hi in LAT_BANDS:
-        mask = (lat >= lo) & (lat < hi if hi < 90 else lat <= hi)
+        mask = (lat >= lo) & ((lat < hi) if hi < 90 else (lat <= hi))
         if mask.any():
             masks.append((lo, hi, mask))
     return masks
@@ -218,7 +249,14 @@ def write_html_index(output: Path, figures: list[Path], report: Path) -> Path:
     return index
 
 
-def plot_vbal_groups(workspace: str | Path, output_dir: str | Path | None = None, dpi: int = 150) -> list[Path]:
+def plot_vbal_groups(
+    workspace: str | Path,
+    output_dir: str | Path | None = None,
+    dpi: int = 150,
+    mode: str = "quick",
+    pairs: set[str] | None = None,
+    products: set[str] | None = None,
+) -> list[Path]:
     import netCDF4
 
     workspace = Path(workspace)
@@ -226,17 +264,29 @@ def plot_vbal_groups(workspace: str | Path, output_dir: str | Path | None = None
     output.mkdir(parents=True, exist_ok=True)
     lat = load_lat_c2(workspace)
     vbal = workspace / "VBAL" / "mpas_vbal.nc"
+    if mode not in {"quick", "standard", "full"}:
+        raise ValueError("mode must be quick, standard or full")
+    active_pairs = pairs if pairs is not None else DEFAULT_PAIRS
+    active_products = products if products is not None else DEFAULT_PRODUCTS
+    use_latbands = mode in {"standard", "full"}
+    use_matrices = mode == "full"
+
     figures: list[Path] = []
     lines = [
         "# VBAL grouped diagnostics",
         "",
         f"Workspace: `{workspace}`",
+        f"Mode: `{mode}`",
+        f"Pairs: `{sorted(active_pairs) if active_pairs else 'all'}`",
+        f"Products: `{sorted(active_products)}`",
         "",
         "| group | variable | shape | products |",
         "| --- | --- | --- | --- |",
     ]
     with netCDF4.Dataset(vbal) as ds:
         for group_name, variable_name, variable in iter_group_variables(ds):
+            if not should_process(group_name, variable_name, active_pairs, active_products):
+                continue
             values = finite(variable[:])
             stem = f"vbal_{safe_stem(group_name)}_{safe_stem(variable_name)}"
             made: list[Path] = []
@@ -245,8 +295,9 @@ def plot_vbal_groups(workspace: str | Path, output_dir: str | Path | None = None
                 add_figure(made, fig, plot_lat_level(values, lat, fig, f"{group_name} {variable_name}", variable_name, dpi))
                 fig = output / f"{stem}_profile.png"
                 add_figure(made, fig, plot_profile(values, fig, f"Mean profile {group_name} {variable_name}", variable_name, dpi))
-                fig = output / f"{stem}_latband_profiles.png"
-                add_figure(made, fig, plot_band_profiles(values, lat, fig, f"Latitude-band profiles {group_name} {variable_name}", variable_name, dpi))
+                if use_latbands:
+                    fig = output / f"{stem}_latband_profiles.png"
+                    add_figure(made, fig, plot_band_profiles(values, lat, fig, f"Latitude-band profiles {group_name} {variable_name}", variable_name, dpi))
             elif variable_name.startswith(("reg", "cov")) and values.ndim == 3:
                 diag = diagonal_levels(values)
                 if diag is not None:
@@ -254,22 +305,24 @@ def plot_vbal_groups(workspace: str | Path, output_dir: str | Path | None = None
                     add_figure(made, fig, plot_lat_level(diag, lat, fig, f"Diagonal {group_name} {variable_name}", variable_name, dpi))
                     fig = output / f"{stem}_diag_profile.png"
                     add_figure(made, fig, plot_profile(diag, fig, f"Mean diagonal profile {group_name} {variable_name}", variable_name, dpi))
-                    fig = output / f"{stem}_diag_latband_profiles.png"
-                    add_figure(made, fig, plot_band_profiles(diag, lat, fig, f"Latitude-band diagonal profiles {group_name} {variable_name}", variable_name, dpi))
-                mean_mat = matrix_mean(values)
-                if mean_mat is not None:
-                    fig = output / f"{stem}_mean_matrix.png"
-                    add_figure(made, fig, plot_matrix(mean_mat, fig, f"Mean matrix {group_name} {variable_name}", variable_name, dpi))
-                    for band in LAT_BANDS:
-                        band_mat = matrix_mean(values, lat=lat, band=band)
-                        if band_mat is None:
-                            continue
-                        lo, hi = band
-                        fig = output / f"{stem}_mean_matrix_lat_{lo}_{hi}.png".replace("-", "m")
-                        add_figure(made, fig, plot_matrix(band_mat, fig, f"Mean matrix {group_name} {variable_name} lat {lo} to {hi}", variable_name, dpi))
+                    if use_latbands:
+                        fig = output / f"{stem}_diag_latband_profiles.png"
+                        add_figure(made, fig, plot_band_profiles(diag, lat, fig, f"Latitude-band diagonal profiles {group_name} {variable_name}", variable_name, dpi))
+                if use_matrices:
+                    mean_mat = matrix_mean(values)
+                    if mean_mat is not None:
+                        fig = output / f"{stem}_mean_matrix.png"
+                        add_figure(made, fig, plot_matrix(mean_mat, fig, f"Mean matrix {group_name} {variable_name}", variable_name, dpi))
+                        for band in LAT_BANDS:
+                            band_mat = matrix_mean(values, lat=lat, band=band)
+                            if band_mat is None:
+                                continue
+                            lo, hi = band
+                            fig = output / f"{stem}_mean_matrix_lat_{lo}_{hi}.png".replace("-", "m")
+                            add_figure(made, fig, plot_matrix(band_mat, fig, f"Mean matrix {group_name} {variable_name} lat {lo} to {hi}", variable_name, dpi))
             figures.extend(made)
-            products = ", ".join(f"[{item.name}]({item.name})" for item in made)
-            lines.append(f"| {group_name} | {variable_name} | `{values.shape}` | {products} |")
+            products_md = ", ".join(f"[{item.name}]({item.name})" for item in made)
+            lines.append(f"| {group_name} | {variable_name} | `{values.shape}` | {products_md} |")
     report = output / "vbal_group_diagnostics.md"
     report.write_text("\n".join(lines) + "\n", encoding="utf-8")
     index = write_html_index(output, figures, report)
@@ -285,8 +338,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--workspace", required=True)
     parser.add_argument("--output-dir")
     parser.add_argument("--dpi", type=int, default=150)
+    parser.add_argument("--mode", choices=["quick", "standard", "full"], default="quick")
+    parser.add_argument("--pairs", help="Comma-separated group names. Default: three stream_function balance pairs. Use 'all' for all groups.")
+    parser.add_argument("--products", help="Comma-separated products: explained,reg,cov. Default: explained,reg.")
     args = parser.parse_args(argv)
-    plot_vbal_groups(args.workspace, output_dir=args.output_dir, dpi=args.dpi)
+    pairs = None
+    if args.pairs:
+        pairs = set() if args.pairs.strip().lower() == "all" else parse_csv_set(args.pairs)
+    products = parse_csv_set(args.products) if args.products else None
+    plot_vbal_groups(
+        args.workspace,
+        output_dir=args.output_dir,
+        dpi=args.dpi,
+        mode=args.mode,
+        pairs=pairs,
+        products=products,
+    )
     return 0
 
 
