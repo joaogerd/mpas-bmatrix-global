@@ -31,6 +31,12 @@ Os PBS carregam `scripts/load_jaci_env.sh` e usam `OMP_NUM_THREADS=1`, `GFORTRAN
 
 Mensagens intermitentes do JACI sobre `HOME`, como `cannot access home directory`, não devem ser tratadas como falha científica quando o job executa no diretório de trabalho e o runlog termina com `status = 0`.
 
+## Smoke vs produção
+
+Este documento descreve o baseline smoke validado. A separação entre esse caso e uma futura configuração de produção está documentada em [bmatrix-smoke-vs-production.md](bmatrix-smoke-vs-production.md).
+
+O smoke deve permanecer pequeno, reproduzível e estável para integração/regressão. Ele não deve ser tratado como estatística final de produção da B-matrix.
+
 ## Etapas validadas
 
 ### Bflow
