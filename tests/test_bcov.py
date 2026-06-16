@@ -944,6 +944,111 @@ def test_dirac_summary_writes_csv(tmp_path):
     assert "spechum,2,0.0,3.0,1.5" in text
 
 
+def write_dirac_plot_workspace(tmp_path, variable_dims=("Time", "nCells")):
+    netCDF4 = pytest.importorskip("netCDF4")
+    pytest.importorskip("matplotlib")
+    workspace = tmp_path / "dirac"
+    workspace.mkdir()
+    with netCDF4.Dataset(workspace / "x1.10242.invariant.nc", "w") as dataset:
+        dataset.createDimension("nCells", 4)
+        lat = dataset.createVariable("latCell", "f8", ("nCells",))
+        lon = dataset.createVariable("lonCell", "f8", ("nCells",))
+        lat[:] = [-0.2, -0.1, 0.1, 0.2]
+        lon[:] = [0.0, 0.1, 0.2, 0.3]
+    with netCDF4.Dataset(workspace / "mpas.dirac.nc", "w") as dataset:
+        dataset.createDimension("Time", 1)
+        dataset.createDimension("nCells", 4)
+        dataset.createDimension("nVertLevels", 3)
+        shape = tuple(dataset.dimensions[dim].size for dim in variable_dims)
+        values = dataset.createVariable("temperature", "f4", variable_dims)
+        if variable_dims == ("Time", "nCells"):
+            values[:] = [[-1.0, 0.0, 1.0, 2.0]]
+        elif variable_dims == ("Time", "nCells", "nVertLevels"):
+            values[:] = [[[-1.0, -2.0, -3.0], [0.0, 0.0, 0.0], [1.0, 2.0, 3.0], [2.0, 4.0, 6.0]]]
+        else:
+            values[:] = list(range(1, shape[0] + 1))
+    return workspace
+
+
+def test_parser_exposes_dirac_plot():
+    args = bcov.parser().parse_args(
+        [
+            "dirac-plot",
+            "--workspace",
+            "/tmp/dirac",
+            "--variables",
+            "temperature",
+            "surface_pressure",
+            "--level",
+            "2",
+            "--output-dir",
+            "/tmp/figures",
+            "--dpi",
+            "90",
+        ]
+    )
+
+    assert args.func is bcov.dirac_plot_command
+    assert args.variables == ["temperature", "surface_pressure"]
+    assert args.level == 2
+    assert args.output_dir == "/tmp/figures"
+    assert args.dpi == 90
+
+
+def test_dirac_plot_writes_png_for_time_cell_variable(tmp_path):
+    workspace = write_dirac_plot_workspace(tmp_path)
+    output = tmp_path / "figures"
+
+    figures = bcov.plot_dirac(
+        workspace,
+        variables=["temperature"],
+        output_dir=output,
+        dpi=60,
+    )
+
+    assert figures == [output / "dirac_temperature.png"]
+    assert figures[0].is_file()
+    assert figures[0].stat().st_size > 0
+    index = (output / "index.md").read_text()
+    assert "temperature" in index
+    assert "dirac_temperature.png" in index
+
+
+def test_dirac_plot_writes_png_for_3d_variable_level(tmp_path):
+    workspace = write_dirac_plot_workspace(
+        tmp_path, variable_dims=("Time", "nCells", "nVertLevels")
+    )
+    output = tmp_path / "figures"
+
+    figures = bcov.plot_dirac(
+        workspace,
+        variables=["temperature"],
+        level=2,
+        output_dir=output,
+        dpi=60,
+    )
+
+    assert figures == [output / "dirac_temperature_level002.png"]
+    assert figures[0].is_file()
+    assert "| temperature | 2 |" in (output / "index.md").read_text()
+
+
+def test_dirac_plot_missing_variable_fails(tmp_path):
+    workspace = write_dirac_plot_workspace(tmp_path)
+
+    with pytest.raises(SystemExit, match="variável ausente"):
+        bcov.plot_dirac(workspace, variables=["surface_pressure"])
+
+
+def test_dirac_plot_level_out_of_range_fails(tmp_path):
+    workspace = write_dirac_plot_workspace(
+        tmp_path, variable_dims=("Time", "nCells", "nVertLevels")
+    )
+
+    with pytest.raises(SystemExit, match="nível fora do intervalo"):
+        bcov.plot_dirac(workspace, variables=["temperature"], level=3)
+
+
 def test_parser_exposes_pipeline_all():
     args = bcov.parser().parse_args(
         [

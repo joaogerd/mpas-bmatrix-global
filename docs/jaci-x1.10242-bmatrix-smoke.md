@@ -298,6 +298,16 @@ Resumo diagnóstico do produto Dirac:
 mpasbcov dirac-summary --workspace "$DIRAC"
 ```
 
+Figuras simples do produto Dirac, sem Cartopy:
+
+```bash
+mpasbcov dirac-plot \
+  --workspace "$DIRAC" \
+  --variables temperature surface_pressure stream_function velocity_potential \
+  --level 30 \
+  --output-dir "$DIRAC/figures"
+```
+
 ## Estado final validado
 
 ```text

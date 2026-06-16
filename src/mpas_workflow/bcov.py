@@ -2122,6 +2122,174 @@ def write_dirac_summary_csv(path: str | Path, rows: list[dict[str, object]]) -> 
             writer.writerow(row)
 
 
+def _load_dirac_coordinates(workspace: Path):
+    try:
+        import netCDF4
+        import numpy as np
+    except ImportError as exc:
+        raise SystemExit("ERRO: dirac-plot requer os módulos Python netCDF4 e numpy.") from exc
+
+    candidates = [
+        workspace / "x1.10242.invariant.nc",
+        workspace / "bg.nc",
+    ]
+    candidates.extend(
+        path
+        for path in sorted(workspace.glob("*.nc"))
+        if path not in candidates
+    )
+    for path in candidates:
+        if not path.is_file():
+            continue
+        with netCDF4.Dataset(path) as dataset:
+            if "latCell" not in dataset.variables or "lonCell" not in dataset.variables:
+                continue
+            lat = np.asarray(dataset.variables["latCell"][:], dtype=float).ravel()
+            lon = np.asarray(dataset.variables["lonCell"][:], dtype=float).ravel()
+            if lat.size == 0 or lon.size == 0 or lat.size != lon.size:
+                continue
+            if np.nanmax(np.abs(lat)) <= np.pi + 0.1 and np.nanmax(np.abs(lon)) <= 2 * np.pi + 0.1:
+                lat = np.degrees(lat)
+                lon = np.degrees(lon)
+            lon = ((lon + 180.0) % 360.0) - 180.0
+            return lon, lat, path
+    raise SystemExit(f"ERRO: latCell/lonCell não encontrados em {workspace}")
+
+
+def _select_dirac_variable(dataset, variable_name: str, level: int | None):
+    try:
+        import numpy as np
+    except ImportError as exc:
+        raise SystemExit("ERRO: dirac-plot requer o módulo Python numpy.") from exc
+
+    if variable_name not in dataset.variables:
+        raise SystemExit(f"ERRO: variável ausente em mpas.dirac.nc: {variable_name}")
+    variable = dataset.variables[variable_name]
+    values = np.ma.asarray(variable[:], dtype=float).filled(np.nan)
+    dims = tuple(variable.dimensions)
+    shape = tuple(variable.shape)
+
+    if "nCells" not in dims:
+        raise SystemExit(
+            f"ERRO: variável {variable_name} não possui dimensão nCells: {dims}"
+        )
+    level_used = None
+
+    if "Time" in dims:
+        values = np.take(values, 0, axis=dims.index("Time"))
+        dims = tuple(dim for dim in dims if dim != "Time")
+
+    if "nVertLevels" in dims:
+        level_axis = dims.index("nVertLevels")
+        nlevels = values.shape[level_axis]
+        candidate = nlevels // 2 if level is None else int(level)
+        if candidate < 0 or candidate >= nlevels:
+            raise SystemExit(
+                f"ERRO: nível fora do intervalo para {variable_name}: "
+                f"{candidate}; válido: 0..{nlevels - 1}"
+            )
+        values = np.take(values, candidate, axis=level_axis)
+        dims = tuple(dim for dim in dims if dim != "nVertLevels")
+        level_used = candidate
+
+    if tuple(dims) != ("nCells",):
+        if "nCells" in dims and values.ndim == 1:
+            values = np.asarray(values).ravel()
+        else:
+            raise SystemExit(
+                f"ERRO: formato não suportado para {variable_name}: dimensões {shape}"
+            )
+
+    return np.asarray(values, dtype=float).ravel(), level_used
+
+
+def _dirac_plot_filename(variable: str, level: int | None) -> str:
+    if level is None:
+        return f"dirac_{variable}.png"
+    return f"dirac_{variable}_level{level:03d}.png"
+
+
+def plot_dirac(
+    workspace: str | Path,
+    variables: list[str],
+    level: int | None = None,
+    output_dir: str | Path | None = None,
+    dpi: int = 150,
+) -> list[Path]:
+    workspace = Path(workspace)
+    path = workspace / "mpas.dirac.nc"
+    if not path.is_file():
+        raise SystemExit(f"ERRO: produto Dirac ausente: {path}")
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import netCDF4
+        import numpy as np
+    except ImportError as exc:
+        raise SystemExit("ERRO: dirac-plot requer matplotlib, netCDF4 e numpy.") from exc
+
+    output = Path(output_dir) if output_dir else workspace / "figures"
+    output.mkdir(parents=True, exist_ok=True)
+    lon, lat, coords_source = _load_dirac_coordinates(workspace)
+    figures: list[Path] = []
+    command = (
+        f"mpasbcov dirac-plot --workspace {workspace} "
+        f"--variables {' '.join(variables)}"
+    )
+    if level is not None:
+        command += f" --level {level}"
+    command += f" --output-dir {output} --dpi {dpi}"
+    index_rows = [
+        "# Dirac figures",
+        "",
+        f"Workspace: `{workspace}`",
+        f"Command: `{command}`",
+        f"Coordinates: `{coords_source}`",
+        "",
+        "| Variable | Level | Figure |",
+        "| --- | --- | --- |",
+    ]
+
+    with netCDF4.Dataset(path) as dataset:
+        for variable in variables:
+            values, level_used = _select_dirac_variable(dataset, variable, level)
+            if values.size != lon.size:
+                raise SystemExit(
+                    f"ERRO: variável {variable} tem {values.size} valores, "
+                    f"mas coordenadas têm {lon.size}"
+                )
+            finite = values[np.isfinite(values)]
+            if finite.size == 0:
+                raise SystemExit(f"ERRO: variável {variable} não tem valores finitos")
+            has_negative = bool(np.nanmin(finite) < 0.0)
+            has_positive = bool(np.nanmax(finite) > 0.0)
+            cmap = "coolwarm" if has_negative and has_positive else "viridis"
+            figure = output / _dirac_plot_filename(variable, level_used)
+
+            plt.figure(figsize=(8, 4.5))
+            scatter = plt.scatter(lon, lat, c=values, s=8, cmap=cmap)
+            title = f"Dirac {variable}"
+            if level_used is not None:
+                title += f" level {level_used:03d}"
+            plt.title(title)
+            plt.xlabel("longitude")
+            plt.ylabel("latitude")
+            plt.grid(True, alpha=0.25)
+            plt.colorbar(scatter, label=variable)
+            plt.tight_layout()
+            plt.savefig(figure, dpi=dpi)
+            plt.close()
+
+            figures.append(figure)
+            level_text = "" if level_used is None else str(level_used)
+            index_rows.append(f"| {variable} | {level_text} | [{figure.name}]({figure.name}) |")
+
+    write_text(output / "index.md", "\n".join(index_rows) + "\n")
+    return figures
+
+
 def clean_dirac_outputs(run_dir: Path) -> None:
     for name in ["run_dirac.runlog", "stdout.log", "stderr.log", "mpas.dirac.nc"]:
         (run_dir / name).unlink(missing_ok=True)
@@ -2346,6 +2514,20 @@ def dirac_summary_command(args) -> int:
     if args.csv:
         write_dirac_summary_csv(args.csv, rows)
         print(f"CSV={args.csv}")
+    return 0
+
+
+def dirac_plot_command(args) -> int:
+    figures = plot_dirac(
+        args.workspace,
+        variables=args.variables,
+        level=args.level,
+        output_dir=args.output_dir,
+        dpi=args.dpi,
+    )
+    print("=== Dirac plots ===")
+    for figure in figures:
+        print(f"FIGURE={figure}")
     return 0
 
 
@@ -2628,6 +2810,23 @@ def parser():
     dsummary.add_argument("--workspace", required=True)
     dsummary.add_argument("--csv", help="Arquivo CSV opcional para salvar a tabela")
     dsummary.set_defaults(func=dirac_summary_command)
+
+    dplot = sub.add_parser("dirac-plot", help="Gera PNGs simples do produto mpas.dirac.nc")
+    dplot.add_argument("--workspace", required=True)
+    dplot.add_argument(
+        "--variables",
+        nargs="+",
+        default=[
+            "temperature",
+            "surface_pressure",
+            "stream_function",
+            "velocity_potential",
+        ],
+    )
+    dplot.add_argument("--level", type=int, default=30)
+    dplot.add_argument("--output-dir")
+    dplot.add_argument("--dpi", type=int, default=150)
+    dplot.set_defaults(func=dirac_plot_command)
 
     dall = sub.add_parser("dirac-all", help="Prepara, submete, espera e valida Dirac")
     dall.add_argument("--config", default=DEFAULT_CONFIG)
