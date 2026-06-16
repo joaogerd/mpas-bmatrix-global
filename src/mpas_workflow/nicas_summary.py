@@ -13,10 +13,10 @@ DEFAULT_VARIABLES = (
     "spechum",
     "surface_pressure",
 )
-DEFAULT_PATTERNS = (
-    "mpas*.nc",
-    "*.nicas*.nc",
-    "*.dirac*.nc",
+DEFAULT_GLOBAL_FILES = (
+    "mpas.dirac_nicas.nc",
+    "mpas.nicas_norm.nc",
+    "mpas_nicas.nc",
 )
 
 
@@ -227,18 +227,53 @@ def write_html_index(output: Path, figures: list[Path], report: Path) -> Path:
     return index
 
 
+def search_roots(workspace: Path) -> list[Path]:
+    roots = []
+    if (workspace / "NICAS").is_dir():
+        roots.append(workspace / "NICAS")
+    roots.append(workspace)
+    unique = []
+    for root in roots:
+        if root not in unique:
+            unique.append(root)
+    return unique
+
+
 def candidate_files(workspace: Path, requested: list[str]) -> list[Path]:
-    root = workspace / "NICAS"
-    if requested:
-        return [root / item for item in requested]
+    roots = search_roots(workspace)
     seen: set[Path] = set()
     files: list[Path] = []
-    for pattern in DEFAULT_PATTERNS:
-        for path in sorted(root.glob(pattern)):
-            if path.is_file() and path not in seen:
-                seen.add(path)
-                files.append(path)
+    if requested:
+        for item in requested:
+            item_path = Path(item)
+            candidates = [item_path] if item_path.is_absolute() else []
+            for root in roots:
+                candidates.append(root / item)
+                candidates.extend(root.rglob(item))
+            for path in candidates:
+                if path.is_file() and path not in seen:
+                    seen.add(path)
+                    files.append(path)
+        return files
+
+    for root in roots:
+        for name in DEFAULT_GLOBAL_FILES:
+            for path in sorted(root.rglob(name)):
+                if not path.is_file():
+                    continue
+                if path.name not in DEFAULT_GLOBAL_FILES:
+                    continue
+                if path not in seen:
+                    seen.add(path)
+                    files.append(path)
     return files
+
+
+def relpath(path: Path, workspace: Path) -> str:
+    try:
+        return str(path.relative_to(workspace))
+    except ValueError:
+        return str(path)
 
 
 def summarize_nicas(
@@ -253,7 +288,7 @@ def summarize_nicas(
     import netCDF4
 
     workspace = Path(workspace)
-    output = Path(output_dir) if output_dir else workspace / "NICAS" / "figures_nicas_summary"
+    output = Path(output_dir) if output_dir else workspace / "figures_nicas_summary"
     output.mkdir(parents=True, exist_ok=True)
     active_variables = set(variables or DEFAULT_VARIABLES)
     use_all_variables = variables == []
@@ -271,10 +306,14 @@ def summarize_nicas(
         "| file | variable | dims | shape | stats | products |",
         "| --- | --- | --- | --- | --- | --- |",
     ]
-    for path in candidate_files(workspace, files or []):
+    ncfiles = candidate_files(workspace, files or [])
+    if not ncfiles:
+        lines.append("| NONE | No NICAS NetCDF products found | | | | |")
+    for path in ncfiles:
         if not path.is_file():
             lines.append(f"| {path.name} | MISSING | | | | |")
             continue
+        matched = 0
         with netCDF4.Dataset(path) as ds:
             for name, variable in iter_group_variables(ds):
                 short_name = name.split("/")[-1]
@@ -282,24 +321,27 @@ def summarize_nicas(
                     continue
                 if not use_all_variables and short_name not in active_variables:
                     continue
+                matched += 1
                 arr, dims = field_array(variable)
-                stem = f"nicas_{safe_stem(path.stem)}_{safe_stem(name)}"
+                stem = f"nicas_{safe_stem(relpath(path, workspace))}_{safe_stem(name)}"
                 made: list[Path] = []
                 profile = profile_from_field(arr, dims)
                 fig = output / f"{stem}_profile.png"
-                add_figure(made, fig, plot_profile(profile, fig, f"{path.name} {name} profile", short_name, dpi))
+                add_figure(made, fig, plot_profile(profile, fig, f"{relpath(path, workspace)} {name} profile", short_name, dpi))
                 level_values = level_values_from_field(arr, dims, level)
                 fig = output / f"{stem}_level{level:02d}_cell_series.png"
-                add_figure(made, fig, plot_cell_series(level_values, fig, f"{path.name} {name} level {level}", short_name, dpi))
+                add_figure(made, fig, plot_cell_series(level_values, fig, f"{relpath(path, workspace)} {name} level {level}", short_name, dpi))
                 if use_histograms:
                     fig = output / f"{stem}_histogram.png"
-                    add_figure(made, fig, plot_histogram(arr, fig, f"{path.name} {name} histogram", short_name, dpi))
+                    add_figure(made, fig, plot_histogram(arr, fig, f"{relpath(path, workspace)} {name} histogram", short_name, dpi))
                 if use_abs_sorted:
                     fig = output / f"{stem}_abs_sorted.png"
-                    add_figure(made, fig, plot_abs_sorted(arr, fig, f"{path.name} {name} sorted absolute values", short_name, dpi))
+                    add_figure(made, fig, plot_abs_sorted(arr, fig, f"{relpath(path, workspace)} {name} sorted absolute values", short_name, dpi))
                 figures.extend(made)
                 products = ", ".join(f"[{item.name}]({item.name})" for item in made)
-                lines.append(f"| {path.name} | {name} | `{tuple(variable.dimensions)}` | `{tuple(variable.shape)}` | {stats(variable[:])} | {products} |")
+                lines.append(f"| {relpath(path, workspace)} | {name} | `{tuple(variable.dimensions)}` | `{tuple(variable.shape)}` | {stats(variable[:])} | {products} |")
+        if matched == 0:
+            lines.append(f"| {relpath(path, workspace)} | No supported nCells fields matched filters | | | | |")
     report = output / "nicas_summary.md"
     report.write_text("\n".join(lines) + "\n", encoding="utf-8")
     index = write_html_index(output, figures, report)
@@ -318,7 +360,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dpi", type=int, default=150)
     parser.add_argument("--mode", choices=["quick", "standard", "full"], default="quick")
     parser.add_argument("--variables", help="Comma-separated variables. Use 'all' for all supported nCells fields.")
-    parser.add_argument("--files", help="Comma-separated NICAS file names under workspace/NICAS.")
+    parser.add_argument("--files", help="Comma-separated NICAS file names or relative paths under the workspace.")
     args = parser.parse_args(argv)
     variables = None
     if args.variables:
