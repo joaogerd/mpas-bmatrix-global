@@ -1049,6 +1049,185 @@ def test_dirac_plot_level_out_of_range_fails(tmp_path):
         bcov.plot_dirac(workspace, variables=["temperature"], level=3)
 
 
+def write_plot_coordinates(workspace):
+    netCDF4 = pytest.importorskip("netCDF4")
+    with netCDF4.Dataset(workspace / "x1.10242.invariant.nc", "w") as dataset:
+        dataset.createDimension("nCells", 4)
+        dataset.createVariable("latCell", "f8", ("nCells",))[:] = [-0.2, -0.1, 0.1, 0.2]
+        dataset.createVariable("lonCell", "f8", ("nCells",))[:] = [0.0, 0.1, 0.2, 0.3]
+
+
+def write_cell_level_file(path, variable="temperature"):
+    netCDF4 = pytest.importorskip("netCDF4")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with netCDF4.Dataset(path, "w") as dataset:
+        dataset.createDimension("Time", 1)
+        dataset.createDimension("nCells", 4)
+        dataset.createDimension("nVertLevels", 3)
+        values = dataset.createVariable(variable, "f4", ("Time", "nCells", "nVertLevels"))
+        values[:] = [[[-1.0, -2.0, -3.0], [0.0, 0.0, 0.0], [1.0, 2.0, 3.0], [2.0, 4.0, 6.0]]]
+
+
+def test_parser_exposes_hdiag_nicas_vbal_plot():
+    parser = bcov.parser()
+
+    assert parser.parse_args(["hdiag-plot", "--workspace", "/tmp/hdiag"]).func is bcov.hdiag_plot_command
+    assert parser.parse_args(["nicas-plot", "--workspace", "/tmp/nicas"]).func is bcov.nicas_plot_command
+    assert parser.parse_args(["vbal-plot", "--workspace", "/tmp/vbal"]).func is bcov.vbal_plot_command
+
+
+def test_hdiag_plot_creates_png_and_index(tmp_path):
+    pytest.importorskip("matplotlib")
+    workspace = tmp_path / "hdiag"
+    workspace.mkdir()
+    write_plot_coordinates(workspace)
+    for name in ["mpas.stddev.nc", "mpas.cor_rh.nc", "mpas.cor_rv.nc"]:
+        write_cell_level_file(workspace / "HDIAG" / name)
+    output = tmp_path / "hdiag_figures"
+
+    figures = bcov.plot_hdiag(
+        workspace,
+        variables=["temperature"],
+        level=1,
+        output_dir=output,
+        dpi=60,
+    )
+
+    assert figures
+    assert all(path.is_file() for path in figures)
+    assert (output / "index.md").is_file()
+    assert "temperature" in (output / "index.md").read_text()
+
+
+def test_nicas_plot_creates_png_and_index(tmp_path):
+    pytest.importorskip("matplotlib")
+    workspace = tmp_path / "nicas"
+    workspace.mkdir()
+    write_plot_coordinates(workspace)
+    write_cell_level_file(workspace / "merge" / "mpas_nicas.nc", variable="stream_function")
+    output = tmp_path / "nicas_figures"
+
+    figures = bcov.plot_nicas(
+        workspace,
+        variables=["stream_function"],
+        level=1,
+        output_dir=output,
+        dpi=60,
+    )
+
+    assert figures == [output / "nicas_mpas_nicas_stream_function_level001.png"]
+    assert figures[0].is_file()
+    assert "stream_function" in (output / "index.md").read_text()
+
+
+def test_vbal_plot_creates_png_and_index_for_1d_variable(tmp_path):
+    netCDF4 = pytest.importorskip("netCDF4")
+    pytest.importorskip("matplotlib")
+    workspace = tmp_path / "vbal"
+    run_dir = workspace / "VBAL"
+    run_dir.mkdir(parents=True)
+    for filename in ["mpas_vbal.nc", "mpas_sampling.nc"]:
+        with netCDF4.Dataset(run_dir / filename, "w") as dataset:
+            dataset.createDimension("nVertLevels", 3)
+            dataset.createVariable("regression", "f4", ("nVertLevels",))[:] = [0.0, 1.0, 2.0]
+    output = tmp_path / "vbal_figures"
+
+    figures = bcov.plot_vbal(
+        workspace,
+        variables=["regression"],
+        level=None,
+        output_dir=output,
+        dpi=60,
+    )
+
+    assert len(figures) == 2
+    assert all(path.is_file() for path in figures)
+    assert "regression" in (output / "index.md").read_text()
+
+
+def test_diagnostic_plot_missing_variable_fails(tmp_path):
+    pytest.importorskip("matplotlib")
+    workspace = tmp_path / "nicas"
+    workspace.mkdir()
+    write_plot_coordinates(workspace)
+    write_cell_level_file(workspace / "merge" / "mpas_nicas.nc", variable="temperature")
+
+    with pytest.raises(SystemExit, match="variável ausente"):
+        bcov.plot_nicas(workspace, variables=["surface_pressure"])
+
+
+def test_diagnostic_plot_level_out_of_range_fails(tmp_path):
+    pytest.importorskip("matplotlib")
+    workspace = tmp_path / "nicas"
+    workspace.mkdir()
+    write_plot_coordinates(workspace)
+    write_cell_level_file(workspace / "merge" / "mpas_nicas.nc", variable="temperature")
+
+    with pytest.raises(SystemExit, match="nível fora do intervalo"):
+        bcov.plot_nicas(workspace, variables=["temperature"], level=5)
+
+
+def test_parser_exposes_report():
+    args = bcov.parser().parse_args(
+        [
+            "report",
+            "--config",
+            "configs/test.yaml",
+            "--dirac-workspace",
+            "/tmp/dirac",
+            "--figures-dir",
+            "/tmp/figures",
+            "--output",
+            "/tmp/report.md",
+            "--title",
+            "Smoke Report",
+        ]
+    )
+
+    assert args.func is bcov.report_command
+    assert args.figures_dir == ["/tmp/figures"]
+    assert args.title == "Smoke Report"
+
+
+def test_report_writes_markdown_with_workspaces_products_and_figures(tmp_path):
+    dirac = tmp_path / "dirac"
+    figures = tmp_path / "figures"
+    dirac.mkdir()
+    figures.mkdir()
+    (dirac / "mpas.dirac.nc").touch()
+    (figures / "dirac_temperature.png").touch()
+    output = tmp_path / "report.md"
+
+    bcov.write_bmatrix_report(
+        output,
+        title="Smoke Report",
+        config_path="configs/test.yaml",
+        bflow_workspace_path=tmp_path / "bflow",
+        dirac_workspace_path=dirac,
+        figures_dirs=[figures],
+    )
+
+    text = output.read_text()
+    assert "# Smoke Report" in text
+    assert "configs/test.yaml" in text
+    assert "Bflow" in text
+    assert "mpas.dirac.nc" in text
+    assert "dirac_temperature.png" in text
+    assert "SKIP" in text
+
+
+def test_report_strict_fails_on_validation_failure(tmp_path):
+    output = tmp_path / "report.md"
+
+    with pytest.raises(SystemExit, match="strict"):
+        bcov.write_bmatrix_report(
+            output,
+            title="Smoke Report",
+            vbal_workspace_path=tmp_path / "missing-vbal",
+            strict=True,
+        )
+
+
 def test_parser_exposes_pipeline_all():
     args = bcov.parser().parse_args(
         [

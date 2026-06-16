@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
+import io
 import re
 import shutil
 import subprocess
@@ -2122,23 +2124,42 @@ def write_dirac_summary_csv(path: str | Path, rows: list[dict[str, object]]) -> 
             writer.writerow(row)
 
 
-def _load_dirac_coordinates(workspace: Path):
+def _is_coordinate_variable(name: str) -> bool:
+    lower = name.lower()
+    return lower in {
+        "latcell",
+        "loncell",
+        "latitude",
+        "longitude",
+        "xcell",
+        "ycell",
+        "zcelle",
+        "index",
+        "time",
+    } or lower.startswith(("lat", "lon"))
+
+
+def _load_coordinates(workspace: Path, preferred: list[Path] | None = None):
     try:
         import netCDF4
         import numpy as np
     except ImportError as exc:
         raise SystemExit("ERRO: dirac-plot requer os módulos Python netCDF4 e numpy.") from exc
 
-    candidates = [
-        workspace / "x1.10242.invariant.nc",
-        workspace / "bg.nc",
-    ]
+    candidates = list(preferred or [])
     candidates.extend(
-        path
-        for path in sorted(workspace.glob("*.nc"))
-        if path not in candidates
+        [
+            workspace / "x1.10242.invariant.nc",
+            workspace / "bg.nc",
+        ]
     )
+    candidates.extend(sorted(workspace.glob("*.nc")))
+    candidates.extend(sorted(workspace.glob("*/*.nc")))
+    seen = set()
     for path in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
         if not path.is_file():
             continue
         with netCDF4.Dataset(path) as dataset:
@@ -2156,30 +2177,46 @@ def _load_dirac_coordinates(workspace: Path):
     raise SystemExit(f"ERRO: latCell/lonCell não encontrados em {workspace}")
 
 
-def _select_dirac_variable(dataset, variable_name: str, level: int | None):
+def _load_dirac_coordinates(workspace: Path):
+    return _load_coordinates(workspace)
+
+
+def _numeric_variable_names(dataset) -> list[str]:
     try:
         import numpy as np
     except ImportError as exc:
-        raise SystemExit("ERRO: dirac-plot requer o módulo Python numpy.") from exc
+        raise SystemExit("ERRO: diagnosticos requerem o módulo Python numpy.") from exc
+    names = []
+    for name, variable in dataset.variables.items():
+        if _is_coordinate_variable(name):
+            continue
+        if np.issubdtype(np.dtype(variable.dtype), np.number):
+            names.append(name)
+    return names
+
+
+def _select_nc_variable(dataset, variable_name: str, level: int | None):
+    try:
+        import numpy as np
+    except ImportError as exc:
+        raise SystemExit("ERRO: diagnosticos requerem o módulo Python numpy.") from exc
 
     if variable_name not in dataset.variables:
-        raise SystemExit(f"ERRO: variável ausente em mpas.dirac.nc: {variable_name}")
+        raise SystemExit(f"ERRO: variável ausente: {variable_name}")
     variable = dataset.variables[variable_name]
     values = np.ma.asarray(variable[:], dtype=float).filled(np.nan)
     dims = tuple(variable.dimensions)
     shape = tuple(variable.shape)
 
-    if "nCells" not in dims:
-        raise SystemExit(
-            f"ERRO: variável {variable_name} não possui dimensão nCells: {dims}"
-        )
+    if "nCells" not in dims and values.ndim == 0:
+        raise SystemExit(f"ERRO: variável {variable_name} é escalar; nada para plotar")
     level_used = None
 
     if "Time" in dims:
         values = np.take(values, 0, axis=dims.index("Time"))
         dims = tuple(dim for dim in dims if dim != "Time")
 
-    if "nVertLevels" in dims:
+    if "nVertLevels" in dims and "nCells" in dims:
         level_axis = dims.index("nVertLevels")
         nlevels = values.shape[level_axis]
         candidate = nlevels // 2 if level is None else int(level)
@@ -2192,21 +2229,252 @@ def _select_dirac_variable(dataset, variable_name: str, level: int | None):
         dims = tuple(dim for dim in dims if dim != "nVertLevels")
         level_used = candidate
 
+    values = np.asarray(values, dtype=float)
+    if values.ndim > 2:
+        raise SystemExit(
+            f"ERRO: formato não suportado para {variable_name}: dimensões {shape}"
+        )
+    return values, tuple(dims), level_used
+
+
+def _select_dirac_variable(dataset, variable_name: str, level: int | None):
+    values, dims, level_used = _select_nc_variable(dataset, variable_name, level)
     if tuple(dims) != ("nCells",):
         if "nCells" in dims and values.ndim == 1:
-            values = np.asarray(values).ravel()
+            values = values.ravel()
         else:
+            shape = tuple(dataset.variables[variable_name].shape)
             raise SystemExit(
                 f"ERRO: formato não suportado para {variable_name}: dimensões {shape}"
             )
-
-    return np.asarray(values, dtype=float).ravel(), level_used
+    return values.ravel(), level_used
 
 
 def _dirac_plot_filename(variable: str, level: int | None) -> str:
     if level is None:
         return f"dirac_{variable}.png"
     return f"dirac_{variable}_level{level:03d}.png"
+
+
+def _safe_stem(name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_")
+
+
+def _plot_array(
+    values,
+    dims: tuple[str, ...],
+    variable: str,
+    title: str,
+    figure: Path,
+    dpi: int,
+    lon=None,
+    lat=None,
+) -> None:
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import numpy as np
+    except ImportError as exc:
+        raise SystemExit("ERRO: plots requerem matplotlib e numpy.") from exc
+
+    values = np.asarray(values, dtype=float)
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        raise SystemExit(f"ERRO: variável {variable} não tem valores finitos")
+    has_negative = bool(np.nanmin(finite) < 0.0)
+    has_positive = bool(np.nanmax(finite) > 0.0)
+    cmap = "coolwarm" if has_negative and has_positive else "viridis"
+
+    plt.figure(figsize=(8, 4.5))
+    if values.ndim == 1 and "nCells" in dims and lon is not None and lat is not None:
+        if values.size != len(lon):
+            raise SystemExit(
+                f"ERRO: variável {variable} tem {values.size} valores, "
+                f"mas coordenadas têm {len(lon)}"
+            )
+        artist = plt.scatter(lon, lat, c=values, s=8, cmap=cmap)
+        plt.xlabel("longitude")
+        plt.ylabel("latitude")
+        plt.grid(True, alpha=0.25)
+        plt.colorbar(artist, label=variable)
+    elif values.ndim == 1:
+        plt.plot(values)
+        plt.xlabel(dims[0] if dims else "index")
+        plt.ylabel(variable)
+        plt.grid(True, alpha=0.25)
+    elif values.ndim == 2:
+        artist = plt.imshow(values.T, aspect="auto", origin="lower", cmap=cmap)
+        plt.xlabel(dims[0] if len(dims) > 0 else "x")
+        plt.ylabel(dims[1] if len(dims) > 1 else "y")
+        plt.colorbar(artist, label=variable)
+    else:
+        raise SystemExit(f"ERRO: formato não suportado para plotar {variable}")
+    plt.title(title)
+    plt.tight_layout()
+    plt.savefig(figure, dpi=dpi)
+    plt.close()
+
+
+def _write_plot_index(output: Path, title: str, workspace: Path, rows: list[dict[str, str]]) -> None:
+    lines = [
+        f"# {title}",
+        "",
+        f"Workspace: `{workspace}`",
+        "",
+        "| Source | Variable | Level | Figure |",
+        "| --- | --- | --- | --- |",
+    ]
+    for row in rows:
+        lines.append(
+            f"| {row['source']} | {row['variable']} | {row['level']} | "
+            f"[{row['figure']}]({row['figure']}) |"
+        )
+    write_text(output / "index.md", "\n".join(lines) + "\n")
+
+
+def _plot_diagnostic_files(
+    workspace: str | Path,
+    files: list[Path],
+    label: str,
+    variables: list[str] | None = None,
+    level: int | None = 30,
+    output_dir: str | Path | None = None,
+    dpi: int = 150,
+    require_all_files: bool = True,
+) -> list[Path]:
+    try:
+        import netCDF4
+    except ImportError as exc:
+        raise SystemExit("ERRO: plots requerem netCDF4.") from exc
+
+    root = Path(workspace)
+    existing = []
+    missing = []
+    for path in files:
+        path = root / path if not path.is_absolute() else path
+        if path.is_file():
+            existing.append(path)
+        else:
+            missing.append(path)
+    if missing and require_all_files:
+        raise SystemExit(
+            "ERRO: arquivo diagnostico ausente: " + ", ".join(str(path) for path in missing)
+        )
+    if not existing:
+        raise SystemExit(f"ERRO: nenhum arquivo diagnostico encontrado em {root}")
+
+    output = Path(output_dir) if output_dir else root / "figures"
+    output.mkdir(parents=True, exist_ok=True)
+    lon = lat = None
+    try:
+        lon, lat, _ = _load_coordinates(root, preferred=existing)
+    except SystemExit:
+        pass
+
+    figures: list[Path] = []
+    index_rows: list[dict[str, str]] = []
+    requested = list(variables or [])
+    found_requested = set()
+
+    for path in existing:
+        with netCDF4.Dataset(path) as dataset:
+            names = requested or _numeric_variable_names(dataset)
+            for name in names:
+                if name not in dataset.variables:
+                    continue
+                found_requested.add(name)
+                values, dims, level_used = _select_nc_variable(dataset, name, level)
+                suffix = "" if level_used is None else f"_level{level_used:03d}"
+                figure = output / f"{label}_{_safe_stem(path.stem)}_{_safe_stem(name)}{suffix}.png"
+                title = f"{label.upper()} {path.name} {name}"
+                if level_used is not None:
+                    title += f" level {level_used:03d}"
+                _plot_array(values, dims, name, title, figure, dpi, lon=lon, lat=lat)
+                figures.append(figure)
+                index_rows.append(
+                    {
+                        "source": path.name,
+                        "variable": name,
+                        "level": "" if level_used is None else str(level_used),
+                        "figure": figure.name,
+                    }
+                )
+    if requested:
+        missing_vars = [name for name in requested if name not in found_requested]
+        if missing_vars:
+            raise SystemExit("ERRO: variável ausente: " + ", ".join(missing_vars))
+    if not figures:
+        raise SystemExit(f"ERRO: nenhuma variável numérica útil encontrada em {root}")
+    _write_plot_index(output, f"{label.upper()} diagnostic figures", root, index_rows)
+    return figures
+
+
+def plot_hdiag(
+    workspace: str | Path,
+    variables: list[str] | None = None,
+    level: int | None = 30,
+    output_dir: str | Path | None = None,
+    dpi: int = 150,
+) -> list[Path]:
+    return _plot_diagnostic_files(
+        workspace,
+        [
+            Path("HDIAG") / "mpas.stddev.nc",
+            Path("HDIAG") / "mpas.cor_rh.nc",
+            Path("HDIAG") / "mpas.cor_rv.nc",
+        ],
+        "hdiag",
+        variables=variables,
+        level=level,
+        output_dir=output_dir,
+        dpi=dpi,
+    )
+
+
+def plot_nicas(
+    workspace: str | Path,
+    variables: list[str] | None = None,
+    level: int | None = 30,
+    output_dir: str | Path | None = None,
+    dpi: int = 150,
+) -> list[Path]:
+    return _plot_diagnostic_files(
+        workspace,
+        [
+            Path("merge") / "mpas_nicas.nc",
+            Path("merge") / "mpas.nicas_norm.nc",
+            Path("merge") / "mpas.dirac_nicas.nc",
+        ],
+        "nicas",
+        variables=variables,
+        level=level,
+        output_dir=output_dir,
+        dpi=dpi,
+        require_all_files=False,
+    )
+
+
+def plot_vbal(
+    workspace: str | Path,
+    variables: list[str] | None = None,
+    level: int | None = 30,
+    output_dir: str | Path | None = None,
+    dpi: int = 150,
+) -> list[Path]:
+    return _plot_diagnostic_files(
+        workspace,
+        [
+            Path("VBAL") / "mpas_vbal.nc",
+            Path("VBAL") / "mpas_sampling.nc",
+        ],
+        "vbal",
+        variables=variables,
+        level=level,
+        output_dir=output_dir,
+        dpi=dpi,
+    )
 
 
 def plot_dirac(
@@ -2341,6 +2609,19 @@ def vbal_validate_command(args) -> int:
     return 0
 
 
+def vbal_plot_command(args) -> int:
+    figures = plot_vbal(
+        args.workspace,
+        variables=args.variables,
+        level=args.level,
+        output_dir=args.output_dir,
+        dpi=args.dpi,
+    )
+    for figure in figures:
+        print(f"FIGURE={figure}")
+    return 0
+
+
 def vbal_all_command(args) -> int:
     config = load_config(args.config)
     workspace = prepare_vbal(config, args.bflow_workspace, workspace=args.workspace, clean=args.clean)
@@ -2364,6 +2645,19 @@ def hdiag_submit_command(args) -> int:
 
 def hdiag_validate_command(args) -> int:
     validate_hdiag(args.workspace)
+    return 0
+
+
+def hdiag_plot_command(args) -> int:
+    figures = plot_hdiag(
+        args.workspace,
+        variables=args.variables,
+        level=args.level,
+        output_dir=args.output_dir,
+        dpi=args.dpi,
+    )
+    for figure in figures:
+        print(f"FIGURE={figure}")
     return 0
 
 
@@ -2401,6 +2695,19 @@ def nicas_submit_command(args) -> int:
 
 def nicas_validate_command(args) -> int:
     validate_nicas(args.workspace)
+    return 0
+
+
+def nicas_plot_command(args) -> int:
+    figures = plot_nicas(
+        args.workspace,
+        variables=args.variables,
+        level=args.level,
+        output_dir=args.output_dir,
+        dpi=args.dpi,
+    )
+    for figure in figures:
+        print(f"FIGURE={figure}")
     return 0
 
 
@@ -2573,6 +2880,178 @@ def print_pipeline_summary(workspaces: dict[str, Path], statuses: dict[str, str]
         print(f"{name.upper():6s} {status:8s} {workspaces[name]}")
 
 
+def _git_short_commit() -> str:
+    proc = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    return proc.stdout.strip() if proc.returncode == 0 else "unknown"
+
+
+def _validation_status(label: str, workspace: str | Path | None, validator, *args, **kwargs) -> tuple[str, str]:
+    if not workspace:
+        return "SKIP", "workspace não informado"
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            validator(Path(workspace), *args, **kwargs)
+        return "OK", "validado"
+    except SystemExit as exc:
+        return "FAIL", str(exc)
+
+
+def _report_product(path: Path) -> str:
+    return "OK" if path.is_file() else "MISSING"
+
+
+def _markdown_dirac_summary(dirac_workspace_path: str | Path | None) -> list[str]:
+    if not dirac_workspace_path:
+        return ["Dirac workspace não informado."]
+    path = Path(dirac_workspace_path) / "mpas.dirac.nc"
+    if not path.is_file():
+        return [f"`{path}` ausente."]
+    try:
+        rows = summarize_dirac(dirac_workspace_path)
+    except (OSError, SystemExit) as exc:
+        return [f"Resumo Dirac indisponível: {exc}"]
+    lines = [
+        "| variable | shape | min | max | mean | rms | max_abs | nonzero_count |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for row in rows:
+        lines.append(
+            "| {variable} | {shape} | {min} | {max} | {mean} | {rms} | {max_abs} | {nonzero_count} |".format(
+                variable=row["variable"],
+                shape=row["shape"],
+                min=_format_number(float(row["min"])),
+                max=_format_number(float(row["max"])),
+                mean=_format_number(float(row["mean"])),
+                rms=_format_number(float(row["rms"])),
+                max_abs=_format_number(float(row["max_abs"])),
+                nonzero_count=row["nonzero_count"],
+            )
+        )
+    return lines
+
+
+def write_bmatrix_report(
+    output: str | Path,
+    title: str,
+    config_path: str | None = None,
+    bflow_workspace_path: str | Path | None = None,
+    vbal_workspace_path: str | Path | None = None,
+    hdiag_workspace_path: str | Path | None = None,
+    nicas_workspace_path: str | Path | None = None,
+    so_workspace_path: str | Path | None = None,
+    dirac_workspace_path: str | Path | None = None,
+    figures_dirs: list[str | Path] | None = None,
+    strict: bool = False,
+) -> Path:
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    workspaces = {
+        "Bflow": bflow_workspace_path,
+        "VBAL": vbal_workspace_path,
+        "HDIAG": hdiag_workspace_path,
+        "NICAS": nicas_workspace_path,
+        "SO": so_workspace_path,
+        "Dirac": dirac_workspace_path,
+    }
+    validations = [
+        ("VBAL",) + _validation_status("VBAL", vbal_workspace_path, validate_vbal),
+        ("HDIAG",) + _validation_status("HDIAG", hdiag_workspace_path, validate_hdiag),
+        ("NICAS",) + _validation_status("NICAS", nicas_workspace_path, validate_nicas),
+        ("SO default",) + _validation_status(
+            "SO default", so_workspace_path, validate_so, variant="default"
+        ),
+        ("Dirac",) + _validation_status("Dirac", dirac_workspace_path, validate_dirac),
+    ]
+    if strict and any(status == "FAIL" for _, status, _ in validations):
+        failed = ", ".join(label for label, status, _ in validations if status == "FAIL")
+        raise SystemExit(f"ERRO: validação strict falhou para: {failed}")
+
+    product_paths = []
+    if vbal_workspace_path:
+        root = Path(vbal_workspace_path)
+        product_paths.extend([root / "VBAL" / "mpas_vbal.nc", root / "VBAL" / "mpas_sampling.nc"])
+    if hdiag_workspace_path:
+        root = Path(hdiag_workspace_path)
+        product_paths.extend(
+            [
+                root / "HDIAG" / "mpas.stddev.nc",
+                root / "HDIAG" / "mpas.cor_rh.nc",
+                root / "HDIAG" / "mpas.cor_rv.nc",
+            ]
+        )
+    if nicas_workspace_path:
+        product_paths.append(Path(nicas_workspace_path) / "merge" / "mpas_nicas.nc")
+    if so_workspace_path:
+        product_paths.append(Path(so_workspace_path) / "run_SO.runlog")
+    if dirac_workspace_path:
+        root = Path(dirac_workspace_path)
+        product_paths.extend([root / "mpas.dirac.nc", root / "run_dirac.runlog"])
+
+    figures = []
+    for directory in figures_dirs or []:
+        directory = Path(directory)
+        figures.extend(sorted(directory.glob("*.png")) if directory.is_dir() else [])
+
+    lines = [
+        f"# {title}",
+        "",
+        f"Generated: `{now}`",
+        f"Repository commit: `{_git_short_commit()}`",
+        f"Config: `{config_path or 'SKIP'}`",
+        "",
+        "## Workspaces",
+        "",
+        "| Stage | Workspace |",
+        "| --- | --- |",
+    ]
+    for label, path in workspaces.items():
+        lines.append(f"| {label} | `{path}` |" if path else f"| {label} | SKIP |")
+
+    lines.extend(["", "## Validations", "", "| Check | Status | Detail |", "| --- | --- | --- |"])
+    for label, status, detail in validations:
+        lines.append(f"| {label} | {status} | {detail} |")
+
+    lines.extend(["", "## Main Products", "", "| Product | Status |", "| --- | --- |"])
+    for path in product_paths:
+        lines.append(f"| `{path}` | {_report_product(path)} |")
+
+    lines.extend(["", "## Dirac Summary", ""])
+    lines.extend(_markdown_dirac_summary(dirac_workspace_path))
+
+    lines.extend(["", "## Figures", ""])
+    if figures:
+        lines.extend(["| Figure |", "| --- |"])
+        for figure in figures:
+            lines.append(f"| [{figure.name}]({figure}) |")
+    else:
+        lines.append("Nenhuma figura PNG informada ou encontrada.")
+
+    lines.extend(
+        [
+            "",
+            "## Success Criteria",
+            "",
+            "- runlogs das etapas principais terminam com status 0;",
+            "- produtos principais existem;",
+            "- validações do pipeline passam;",
+            "- figuras de diagnóstico foram geradas quando solicitadas;",
+            "",
+            "## Known Notes",
+            "",
+            "- O smoke usa poucos membros e não é estatística final de produção.",
+            "- Avisos `CRAYBLAS_WARNING` não são falha científica se o runlog terminou com status 0.",
+        ]
+    )
+    write_text(output, "\n".join(lines) + "\n")
+    return output
+
+
 def pipeline_all_command(args) -> int:
     if not args.bflow_workspace:
         raise SystemExit("ERRO: pipeline-all requer --bflow-workspace.")
@@ -2666,6 +3145,31 @@ def pipeline_all_command(args) -> int:
     return 0
 
 
+def report_command(args) -> int:
+    output = args.output
+    if output is None:
+        output = (
+            Path(args.dirac_workspace) / "report.md"
+            if args.dirac_workspace
+            else Path("bmatrix_report.md")
+        )
+    path = write_bmatrix_report(
+        output,
+        title=args.title,
+        config_path=args.config,
+        bflow_workspace_path=args.bflow_workspace,
+        vbal_workspace_path=args.vbal_workspace,
+        hdiag_workspace_path=args.hdiag_workspace,
+        nicas_workspace_path=args.nicas_workspace,
+        so_workspace_path=args.so_workspace,
+        dirac_workspace_path=args.dirac_workspace,
+        figures_dirs=args.figures_dir,
+        strict=args.strict,
+    )
+    print(f"REPORT={path}")
+    return 0
+
+
 def parser():
     p = argparse.ArgumentParser(prog="mpasbcov", description="Executa etapas de calibração BUMP/SABER da B-matrix")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -2686,6 +3190,14 @@ def parser():
     validate = sub.add_parser("vbal-validate", help="Valida saída VBAL")
     validate.add_argument("--workspace", required=True)
     validate.set_defaults(func=vbal_validate_command)
+
+    vplot = sub.add_parser("vbal-plot", help="Gera PNGs de diagnóstico VBAL")
+    vplot.add_argument("--workspace", required=True)
+    vplot.add_argument("--variables", nargs="+")
+    vplot.add_argument("--level", type=int, default=30)
+    vplot.add_argument("--output-dir")
+    vplot.add_argument("--dpi", type=int, default=150)
+    vplot.set_defaults(func=vbal_plot_command)
 
     allp = sub.add_parser("vbal-all", help="Prepara, submete, espera e valida VBAL")
     allp.add_argument("--config", default=DEFAULT_CONFIG)
@@ -2711,6 +3223,14 @@ def parser():
     hvalidate = sub.add_parser("hdiag-validate", help="Valida saída HDIAG/NICAS")
     hvalidate.add_argument("--workspace", required=True)
     hvalidate.set_defaults(func=hdiag_validate_command)
+
+    hplot = sub.add_parser("hdiag-plot", help="Gera PNGs de diagnóstico HDIAG")
+    hplot.add_argument("--workspace", required=True)
+    hplot.add_argument("--variables", nargs="+")
+    hplot.add_argument("--level", type=int, default=30)
+    hplot.add_argument("--output-dir")
+    hplot.add_argument("--dpi", type=int, default=150)
+    hplot.set_defaults(func=hdiag_plot_command)
 
     hall = sub.add_parser("hdiag-all", help="Prepara, submete, espera e valida HDIAG/NICAS")
     hall.add_argument("--config", default=DEFAULT_CONFIG)
@@ -2738,6 +3258,14 @@ def parser():
     nvalidate = sub.add_parser("nicas-validate", help="Valida saída NICAS split/merge")
     nvalidate.add_argument("--workspace", required=True)
     nvalidate.set_defaults(func=nicas_validate_command)
+
+    nplot = sub.add_parser("nicas-plot", help="Gera PNGs de diagnóstico NICAS")
+    nplot.add_argument("--workspace", required=True)
+    nplot.add_argument("--variables", nargs="+")
+    nplot.add_argument("--level", type=int, default=30)
+    nplot.add_argument("--output-dir")
+    nplot.add_argument("--dpi", type=int, default=150)
+    nplot.set_defaults(func=nicas_plot_command)
 
     nall = sub.add_parser("nicas-all", help="Prepara, submete, espera e valida NICAS")
     nall.add_argument("--config", default=DEFAULT_CONFIG)
@@ -2851,6 +3379,20 @@ def parser():
         help="Apenas valida workspaces existentes, sem preparar nem submeter jobs",
     )
     pipeline.set_defaults(func=pipeline_all_command)
+
+    report = sub.add_parser("report", help="Gera relatório Markdown consolidado do smoke da matriz B")
+    report.add_argument("--config")
+    report.add_argument("--bflow-workspace")
+    report.add_argument("--vbal-workspace")
+    report.add_argument("--hdiag-workspace")
+    report.add_argument("--nicas-workspace")
+    report.add_argument("--so-workspace")
+    report.add_argument("--dirac-workspace")
+    report.add_argument("--figures-dir", action="append", default=[])
+    report.add_argument("--output")
+    report.add_argument("--title", default="B-matrix smoke report")
+    report.add_argument("--strict", action="store_true")
+    report.set_defaults(func=report_command)
 
     return p
 

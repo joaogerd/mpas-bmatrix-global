@@ -308,6 +308,32 @@ mpasbcov dirac-plot \
   --output-dir "$DIRAC/figures"
 ```
 
+Figuras diagnósticas das etapas de covariância:
+
+```bash
+mpasbcov hdiag-plot --workspace "$HDIAG" --level 30 --output-dir "$HDIAG/figures"
+mpasbcov nicas-plot --workspace "$NICAS" --level 30 --output-dir "$NICAS/figures"
+mpasbcov vbal-plot  --workspace "$VBAL"  --output-dir "$VBAL/figures"
+```
+
+Relatório Markdown consolidado do smoke test:
+
+```bash
+mpasbcov report \
+  --config configs/jaci-x1.10242.yaml \
+  --bflow-workspace "$BFLOW" \
+  --vbal-workspace "$VBAL" \
+  --hdiag-workspace "$HDIAG" \
+  --nicas-workspace "$NICAS" \
+  --so-workspace "$SO" \
+  --dirac-workspace "$DIRAC" \
+  --figures-dir "$HDIAG/figures" \
+  --figures-dir "$NICAS/figures" \
+  --figures-dir "$VBAL/figures" \
+  --figures-dir "$DIRAC/figures" \
+  --output "$DIRAC/report.md"
+```
+
 ## Estado final validado
 
 ```text
