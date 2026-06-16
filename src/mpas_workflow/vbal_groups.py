@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import html
 import re
+from datetime import datetime
 from pathlib import Path
+
+LAT_BANDS = [(-90, -60), (-60, -30), (-30, 0), (0, 30), (30, 60), (60, 90)]
 
 
 def safe_stem(value: str) -> str:
@@ -49,7 +53,31 @@ def diagonal_levels(values):
     return diag
 
 
-def plot_lat_level(values, lat, path: Path, title: str, label: str, dpi: int) -> None:
+def matrix_mean(values, lat=None, band=None):
+    import numpy as np
+
+    arr = finite(values)
+    if arr.ndim != 3:
+        return None
+    if lat is not None and band is not None:
+        lo, hi = band
+        mask = (lat >= lo) & (lat < hi if hi < 90 else lat <= hi)
+        if not np.any(mask):
+            return None
+        arr = arr[:, :, mask]
+    return np.nanmean(arr, axis=2)
+
+
+def band_masks(lat):
+    masks = []
+    for lo, hi in LAT_BANDS:
+        mask = (lat >= lo) & (lat < hi if hi < 90 else lat <= hi)
+        if mask.any():
+            masks.append((lo, hi, mask))
+    return masks
+
+
+def plot_lat_level(values, lat, path: Path, title: str, label: str, dpi: int) -> bool:
     import matplotlib
 
     matplotlib.use("Agg")
@@ -62,7 +90,7 @@ def plot_lat_level(values, lat, path: Path, title: str, label: str, dpi: int) ->
     lat = lat[order]
     valid = arr[np.isfinite(arr)]
     if valid.size == 0:
-        return
+        return False
     cmap = "coolwarm" if np.nanmin(valid) < 0 and np.nanmax(valid) > 0 else "viridis"
     fig, ax = plt.subplots(figsize=(9, 5))
     image = ax.imshow(
@@ -79,9 +107,10 @@ def plot_lat_level(values, lat, path: Path, title: str, label: str, dpi: int) ->
     fig.tight_layout()
     fig.savefig(path, dpi=dpi)
     plt.close(fig)
+    return True
 
 
-def plot_profile(values, path: Path, title: str, label: str, dpi: int) -> None:
+def plot_profile(values, path: Path, title: str, label: str, dpi: int) -> bool:
     import matplotlib
 
     matplotlib.use("Agg")
@@ -90,6 +119,8 @@ def plot_profile(values, path: Path, title: str, label: str, dpi: int) -> None:
 
     arr = finite(values)
     profile = np.nanmean(arr, axis=1) if arr.ndim == 2 else arr
+    if not np.isfinite(profile).any():
+        return False
     fig, ax = plt.subplots(figsize=(5, 7))
     ax.plot(profile, np.arange(profile.size))
     ax.set_title(title)
@@ -99,6 +130,92 @@ def plot_profile(values, path: Path, title: str, label: str, dpi: int) -> None:
     fig.tight_layout()
     fig.savefig(path, dpi=dpi)
     plt.close(fig)
+    return True
+
+
+def plot_band_profiles(values, lat, path: Path, title: str, label: str, dpi: int) -> bool:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    arr = finite(values)
+    fig, ax = plt.subplots(figsize=(6, 7))
+    count = 0
+    for lo, hi, mask in band_masks(lat):
+        profile = np.nanmean(arr[:, mask], axis=1)
+        if np.isfinite(profile).any():
+            ax.plot(profile, np.arange(profile.size), label=f"{lo} to {hi}")
+            count += 1
+    if count == 0:
+        plt.close(fig)
+        return False
+    ax.set_title(title)
+    ax.set_xlabel(label)
+    ax.set_ylabel("vertical level")
+    ax.grid(True, alpha=0.25)
+    ax.legend(fontsize="small")
+    fig.tight_layout()
+    fig.savefig(path, dpi=dpi)
+    plt.close(fig)
+    return True
+
+
+def plot_matrix(values, path: Path, title: str, label: str, dpi: int) -> bool:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    arr = finite(values)
+    valid = arr[np.isfinite(arr)]
+    if valid.size == 0:
+        return False
+    cmap = "coolwarm" if np.nanmin(valid) < 0 and np.nanmax(valid) > 0 else "viridis"
+    fig, ax = plt.subplots(figsize=(6, 5.5))
+    image = ax.imshow(arr, origin="lower", aspect="auto", cmap=cmap)
+    ax.set_title(title)
+    ax.set_xlabel("vertical level 1")
+    ax.set_ylabel("vertical level 2")
+    fig.colorbar(image, ax=ax, label=label)
+    fig.tight_layout()
+    fig.savefig(path, dpi=dpi)
+    plt.close(fig)
+    return True
+
+
+def add_figure(figures: list[Path], figure: Path, created: bool) -> None:
+    if created and figure.is_file():
+        figures.append(figure)
+
+
+def write_html_index(output: Path, figures: list[Path], report: Path) -> Path:
+    index = output / "index.html"
+    rows = [
+        "<!doctype html>",
+        "<html>",
+        "<head>",
+        '<meta charset="utf-8">',
+        "<title>VBAL grouped diagnostics</title>",
+        "<style>",
+        "body{font-family:Arial,sans-serif;margin:24px;}",
+        "img{max-width:1100px;width:100%;border:1px solid #ddd;margin:8px 0 28px 0;}",
+        "code{background:#eee;padding:2px 4px;}",
+        "</style>",
+        "</head>",
+        "<body>",
+        "<h1>VBAL grouped diagnostics</h1>",
+        f"<p>Generated: <code>{datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')}</code></p>",
+        f'<p>Markdown report: <a href="{html.escape(report.name)}">{html.escape(report.name)}</a></p>',
+    ]
+    for figure in figures:
+        rows.append(f"<h2>{html.escape(figure.name)}</h2>")
+        rows.append(f'<img src="{html.escape(figure.name)}" alt="{html.escape(figure.name)}">')
+    rows.extend(["</body>", "</html>", ""])
+    index.write_text("\n".join(rows), encoding="utf-8")
+    return index
 
 
 def plot_vbal_groups(workspace: str | Path, output_dir: str | Path | None = None, dpi: int = 150) -> list[Path]:
@@ -110,31 +227,54 @@ def plot_vbal_groups(workspace: str | Path, output_dir: str | Path | None = None
     lat = load_lat_c2(workspace)
     vbal = workspace / "VBAL" / "mpas_vbal.nc"
     figures: list[Path] = []
-    lines = ["# VBAL grouped diagnostics", "", f"Workspace: `{workspace}`", "", "| group | variable | shape |", "| --- | --- | --- |"]
+    lines = [
+        "# VBAL grouped diagnostics",
+        "",
+        f"Workspace: `{workspace}`",
+        "",
+        "| group | variable | shape | products |",
+        "| --- | --- | --- | --- |",
+    ]
     with netCDF4.Dataset(vbal) as ds:
         for group_name, variable_name, variable in iter_group_variables(ds):
             values = finite(variable[:])
-            lines.append(f"| {group_name} | {variable_name} | `{values.shape}` |")
             stem = f"vbal_{safe_stem(group_name)}_{safe_stem(variable_name)}"
+            made: list[Path] = []
             if variable_name.startswith("explained_var") and values.ndim == 2:
                 fig = output / f"{stem}_lat_level.png"
-                plot_lat_level(values, lat, fig, f"{group_name} {variable_name}", variable_name, dpi)
-                figures.append(fig)
-                prof = output / f"{stem}_profile.png"
-                plot_profile(values, prof, f"Mean profile {group_name} {variable_name}", variable_name, dpi)
-                figures.append(prof)
+                add_figure(made, fig, plot_lat_level(values, lat, fig, f"{group_name} {variable_name}", variable_name, dpi))
+                fig = output / f"{stem}_profile.png"
+                add_figure(made, fig, plot_profile(values, fig, f"Mean profile {group_name} {variable_name}", variable_name, dpi))
+                fig = output / f"{stem}_latband_profiles.png"
+                add_figure(made, fig, plot_band_profiles(values, lat, fig, f"Latitude-band profiles {group_name} {variable_name}", variable_name, dpi))
             elif variable_name.startswith(("reg", "cov")) and values.ndim == 3:
                 diag = diagonal_levels(values)
                 if diag is not None:
                     fig = output / f"{stem}_diag_lat_level.png"
-                    plot_lat_level(diag, lat, fig, f"Diagonal {group_name} {variable_name}", variable_name, dpi)
-                    figures.append(fig)
-                    prof = output / f"{stem}_diag_profile.png"
-                    plot_profile(diag, prof, f"Mean diagonal profile {group_name} {variable_name}", variable_name, dpi)
-                    figures.append(prof)
+                    add_figure(made, fig, plot_lat_level(diag, lat, fig, f"Diagonal {group_name} {variable_name}", variable_name, dpi))
+                    fig = output / f"{stem}_diag_profile.png"
+                    add_figure(made, fig, plot_profile(diag, fig, f"Mean diagonal profile {group_name} {variable_name}", variable_name, dpi))
+                    fig = output / f"{stem}_diag_latband_profiles.png"
+                    add_figure(made, fig, plot_band_profiles(diag, lat, fig, f"Latitude-band diagonal profiles {group_name} {variable_name}", variable_name, dpi))
+                mean_mat = matrix_mean(values)
+                if mean_mat is not None:
+                    fig = output / f"{stem}_mean_matrix.png"
+                    add_figure(made, fig, plot_matrix(mean_mat, fig, f"Mean matrix {group_name} {variable_name}", variable_name, dpi))
+                    for band in LAT_BANDS:
+                        band_mat = matrix_mean(values, lat=lat, band=band)
+                        if band_mat is None:
+                            continue
+                        lo, hi = band
+                        fig = output / f"{stem}_mean_matrix_lat_{lo}_{hi}.png".replace("-", "m")
+                        add_figure(made, fig, plot_matrix(band_mat, fig, f"Mean matrix {group_name} {variable_name} lat {lo} to {hi}", variable_name, dpi))
+            figures.extend(made)
+            products = ", ".join(f"[{item.name}]({item.name})" for item in made)
+            lines.append(f"| {group_name} | {variable_name} | `{values.shape}` | {products} |")
     report = output / "vbal_group_diagnostics.md"
     report.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    index = write_html_index(output, figures, report)
     print(f"REPORT={report}")
+    print(f"HTML_INDEX={index}")
     for figure in figures:
         print(f"FIGURE={figure}")
     return figures
