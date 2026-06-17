@@ -32,7 +32,7 @@ Arquivos gerados no workspace BFLOW:
 
 | Arquivo/diretório | Função |
 |---|---|
-| `manifest.tsv` | Tabela tabulada com `valid_time`, `f048` e `f024`. É o contrato de entrada para o BFLOW e para o `mpasbcov vbal-all`. |
+| `manifest.tsv` | Tabela com `valid_time`, `f048` e `f024`. É o contrato de entrada para o BFLOW e para o `mpasbcov vbal-all`. |
 | `inputs/YYYYMMDDHH/f048.nc` | Link para o forecast antigo de 48h válido no horário comum. |
 | `inputs/YYYYMMDDHH/f024.nc` | Link para o forecast novo de 24h válido no horário comum. |
 | `inputs/YYYYMMDDHH/pair.env` | Metadados do par usado naquele horário válido. |
