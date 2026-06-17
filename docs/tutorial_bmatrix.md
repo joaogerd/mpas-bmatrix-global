@@ -45,9 +45,9 @@ DIRAC  -> resposta da B completa a um impulso
 
 ---
 
-# 2. Criação e instalação do ambiente Python `mpaswf`
+## 2. Criação e instalação do ambiente Python `mpaswf`
 
-## 2.1. Por que o ambiente `mpaswf` é necessário?
+### 2.1. Por que o ambiente `mpaswf` é necessário?
 
 O repositório `mpas-bmatrix-global` contém ferramentas Python para preparar diretórios de trabalho, gerar YAMLs do JEDI/SABER, gerar scripts PBS, submeter jobs, validar saídas e criar diagnósticos.
 
@@ -71,7 +71,7 @@ mpasbcov
 
 Esses comandos são usados ao longo do tutorial.
 
-## 2.2. Criar o ambiente Conda
+### 2.2. Criar o ambiente Conda
 
 No JACI, carregue o ambiente base do Conda e crie o ambiente `mpaswf`:
 
@@ -94,7 +94,7 @@ python -m pip install PyYAML numpy netCDF4 cftime xarray matplotlib
 
 A dependência `matplotlib` é necessária para os diagnósticos gráficos, mesmo que não esteja listada como dependência obrigatória principal no `pyproject.toml`.
 
-## 2.3. Instalar o repositório
+### 2.3. Instalar o repositório
 
 Entre no repositório:
 
@@ -116,7 +116,7 @@ python -m pip install -e .
 
 Esse modo é recomendado durante o desenvolvimento porque alterações feitas no código passam a ser usadas imediatamente pelo ambiente.
 
-## 2.4. Verificar instalação
+### 2.4. Verificar instalação
 
 Confira se os comandos foram instalados:
 
@@ -134,8 +134,327 @@ não deve aparecer erro de comando não encontrado
 ```
 
 ---
+## 3. Instalação e validação do WPS/ungrib
 
-# 3. Configuração principal do workflow
+### 3.1. Por que o WPS é necessário?
+
+Antes de gerar a matriz B, é necessário gerar amostras NMC. Essas amostras dependem de previsões MPAS iniciadas a partir de condições iniciais consistentes.
+
+Quando a fonte meteorológica usada é GFS em formato GRIB, é necessário passar por uma etapa de pré-processamento com WPS, principalmente com o programa:
+
+```text id="jz1q41"
+ungrib.exe
+```
+
+O `ungrib.exe` lê os arquivos GRIB do GFS e os converte para arquivos intermediários que podem ser usados na preparação das condições iniciais do MPAS.
+
+Portanto, o WPS não faz parte diretamente da matriz B, mas ele é necessário antes do BFLOW quando as amostras NMC serão geradas a partir de previsões MPAS inicializadas com GFS.
+
+A sequência conceitual fica assim:
+
+```text id="y53zis"
+GFS GRIB
+  -> WPS/ungrib
+  -> arquivos intermediários meteorológicos
+  -> MPAS init_atmosphere
+  -> condições iniciais MPAS
+  -> previsões f24 e f48
+  -> diferenças NMC
+  -> BFLOW
+  -> VBAL/HDIAG/NICAS/SO/DIRAC
+```
+
+### 3.2. Configuração esperada do WPS
+
+No arquivo:
+
+```bash id="di2162"
+configs/jaci-x1.10242.yaml
+```
+
+deve existir o bloco:
+
+```yaml id="48lmxa"
+wps:
+  root: /p/projetos/monan_das/joao.gerd/data/mpas-bmatrix-global/external/WPS/WPS-4.6.0
+  ungrib_exe: /p/projetos/monan_das/joao.gerd/data/mpas-bmatrix-global/external/WPS/WPS-4.6.0/ungrib.exe
+  link_grib: /p/projetos/monan_das/joao.gerd/data/mpas-bmatrix-global/external/WPS/WPS-4.6.0/link_grib.csh
+  vtable_gfs: /p/projetos/monan_das/joao.gerd/data/mpas-bmatrix-global/external/WPS/WPS-4.6.0/ungrib/Variable_Tables/Vtable.GFS
+```
+
+Esses caminhos significam:
+
+```text id="np57xk"
+root
+  diretório de instalação/código-fonte do WPS
+
+ungrib_exe
+  executável que converte GRIB para arquivos intermediários
+
+link_grib
+  script do WPS que cria links GRIBFILE.AAA, GRIBFILE.AAB, ...
+
+vtable_gfs
+  tabela que informa ao ungrib como interpretar as variáveis do GFS
+```
+
+### 3.3. Onde o WPS deve estar instalado?
+
+O diretório esperado é:
+
+```bash id="d5esxi"
+/p/projetos/monan_das/joao.gerd/data/mpas-bmatrix-global/external/WPS/WPS-4.6.0
+```
+
+Dentro dele devem existir, ao final da instalação:
+
+```text id="x7v5uf"
+ungrib.exe
+link_grib.csh
+ungrib/Variable_Tables/Vtable.GFS
+```
+
+O arquivo mais importante para o workflow é:
+
+```bash id="nj85h4"
+/p/projetos/monan_das/joao.gerd/data/mpas-bmatrix-global/external/WPS/WPS-4.6.0/ungrib.exe
+```
+
+### 3.4. Verificar se o WPS já está instalado
+
+Antes de compilar, verifique:
+
+```bash id="vp9qqf"
+WPS_ROOT=/p/projetos/monan_das/joao.gerd/data/mpas-bmatrix-global/external/WPS/WPS-4.6.0
+
+ls -lh "$WPS_ROOT"
+ls -lh "$WPS_ROOT/ungrib.exe"
+ls -lh "$WPS_ROOT/link_grib.csh"
+ls -lh "$WPS_ROOT/ungrib/Variable_Tables/Vtable.GFS"
+```
+
+Se `ungrib.exe` existir e for executável, a etapa de instalação do WPS já está pronta:
+
+```bash id="vvsoqe"
+test -x "$WPS_ROOT/ungrib.exe" && echo "OK: ungrib.exe executável"
+```
+
+### 3.5. Baixar ou preparar o código-fonte do WPS
+
+O código-fonte do WPS deve estar em:
+
+```bash id="j2mxo4"
+/p/projetos/monan_das/joao.gerd/data/mpas-bmatrix-global/external/WPS/WPS-4.6.0
+```
+
+Caso o diretório não exista, é necessário baixar/preparar o WPS antes de compilar.
+
+No repositório, o script de build informa que, se o diretório do WPS não existir, primeiro deve ser executada a etapa de download/preparação dos assets do WPS.
+
+Verifique se existe um script legado para isso:
+
+```bash id="m2c45g"
+ls -lh scripts/legacy/*wps* scripts/legacy/*WPS* 2>/dev/null
+```
+
+Depois rode o script apropriado de download/preparação, se ele existir no repositório. Em algumas versões do repositório, essa etapa foi chamada de:
+
+```bash id="panqtv"
+scripts/legacy/10_download_wps_assets.sh
+```
+
+Se esse script não existir na versão atual, o WPS deve ser obtido manualmente ou copiado de uma instalação já preparada para:
+
+```bash id="x8l6yh"
+/p/projetos/monan_das/joao.gerd/data/mpas-bmatrix-global/external/WPS/WPS-4.6.0
+```
+
+### 3.6. Compilar o `ungrib.exe`
+
+Entre no repositório:
+
+```bash id="8w9rhs"
+cd /p/projetos/monan_das/joao.gerd/projects/mpas-bmatrix-global
+```
+
+Carregue o ambiente JACI:
+
+```bash id="z455bp"
+source scripts/load_jaci_env.sh
+```
+
+Ative o ambiente Python, se necessário:
+
+```bash id="mnjref"
+conda activate mpaswf
+```
+
+Rode a compilação:
+
+```bash id="twl2wb"
+bash scripts/legacy/12_build_wps_ungrib.sh \
+  | tee logs/12_build_wps_ungrib.log
+```
+
+Se quiser forçar recompilação:
+
+```bash id="asfn1k"
+FORCE_WPS_REBUILD=true \
+bash scripts/legacy/12_build_wps_ungrib.sh \
+  | tee logs/12_build_wps_ungrib_rebuild.log
+```
+
+### 3.7. O que o script de build faz?
+
+O script `scripts/legacy/12_build_wps_ungrib.sh` executa as seguintes ações:
+
+```text id="v23415"
+1. verifica se o diretório do WPS existe
+2. verifica comandos necessários como nc-config, nf-config, make, perl e csh
+3. cria um prefixo NetCDF compatível com o WPS
+4. detecta dependências GRIB2, como JasPer, PNG e ZLIB
+5. configura o WPS com --nowrf
+6. ajusta configure.wps para usar os wrappers Cray ftn e cc
+7. compila somente o ungrib.exe
+8. verifica se ungrib.exe foi criado
+```
+
+O prefixo NetCDF compatível é necessário porque o ambiente JACI possui `netcdf-c` e `netcdf-fortran` em prefixos separados, enquanto o WPS espera uma única variável `NETCDF`.
+
+### 3.8. Resultado esperado
+
+Ao final, deve existir:
+
+```bash id="czf1da"
+/p/projetos/monan_das/joao.gerd/data/mpas-bmatrix-global/external/WPS/WPS-4.6.0/ungrib.exe
+```
+
+Verifique:
+
+```bash id="k1gi5l"
+WPS_ROOT=/p/projetos/monan_das/joao.gerd/data/mpas-bmatrix-global/external/WPS/WPS-4.6.0
+
+ls -lh "$WPS_ROOT/ungrib.exe"
+file "$WPS_ROOT/ungrib.exe"
+ldd "$WPS_ROOT/ungrib.exe" | grep -Ei "not found|netcdf|jasper|png|zlib|hdf5|curl|gcc|gfortran|mpi|fabric" || true
+```
+
+O resultado esperado é:
+
+```text id="mdf21t"
+ungrib.exe existe
+ungrib.exe é executável
+ldd não mostra bibliotecas obrigatórias como "not found"
+```
+
+### 3.9. Teste mínimo do `ungrib.exe`
+
+Rode:
+
+```bash id="33j5fi"
+"$WPS_ROOT/ungrib.exe" 2>&1 | head -40
+```
+
+É normal que ele reclame da ausência de `namelist.wps` se for executado fora de um diretório preparado. O objetivo desse teste simples é verificar se o executável inicia e não falha imediatamente por biblioteca ausente.
+
+### 3.10. Arquivos do WPS usados depois
+
+Depois da instalação, o workflow usa:
+
+```text id="m610h8"
+ungrib.exe
+  para converter GRIB em arquivos intermediários
+
+link_grib.csh
+  para criar links GRIBFILE.* no diretório de execução do ungrib
+
+Vtable.GFS
+  para informar ao ungrib como interpretar os campos do GFS
+```
+
+Esses arquivos não são produtos da matriz B. Eles são pré-requisitos para preparar os dados atmosféricos que serão usados para gerar as condições iniciais e as previsões MPAS.
+
+### 3.11. Relação com o BFLOW
+
+O WPS deve estar pronto antes da etapa NMC/BFLOW quando as amostras forem geradas a partir do GFS.
+
+A relação é:
+
+```text id="og4vvc"
+WPS/ungrib gera entrada meteorológica para o MPAS
+MPAS init gera condição inicial
+MPAS atmosphere gera previsões f24 e f48
+NMC calcula PTB_f48mf24
+BFLOW organiza essas amostras
+VBAL/HDIAG/NICAS usam essas amostras para calibrar a B
+```
+
+Portanto, a etapa WPS deve aparecer no tutorial antes de:
+
+```text id="zq1p3g"
+gerar amostras NMC
+preparar BFLOW
+rodar VBAL
+```
+
+### 3.12. Problemas comuns
+
+#### 3.12.1. `WPS source directory not found`
+
+Significa que o diretório abaixo ainda não existe:
+
+```bash id="agv0o8"
+/p/projetos/monan_das/joao.gerd/data/mpas-bmatrix-global/external/WPS/WPS-4.6.0
+```
+
+Solução: baixar/copiar o WPS para esse caminho antes da compilação.
+
+#### 3.12.2. `required command not found`
+
+Significa que algum comando necessário não está disponível no ambiente, por exemplo:
+
+```text id="ao829p"
+nc-config
+nf-config
+make
+perl
+csh
+```
+
+Solução: carregar o ambiente JACI correto com:
+
+```bash id="kmgu2j"
+source scripts/load_jaci_env.sh
+```
+
+#### 3.12.3. dependência GRIB2 ausente
+
+Se aparecer erro relacionado a JasPer, PNG ou ZLIB, o script não encontrou uma das dependências necessárias para GRIB2.
+
+Nesse caso, informe explicitamente os caminhos:
+
+```bash id="d6h575"
+JASPERINC=/caminho/include \
+JASPERLIB=/caminho/lib \
+PNG_INC=/caminho/include \
+PNG_LIB=/caminho/lib \
+ZLIB_INC=/caminho/include \
+ZLIB_LIB=/caminho/lib \
+bash scripts/legacy/12_build_wps_ungrib.sh
+```
+
+#### 3.12.4. `ungrib.exe was not created`
+
+Verifique o log:
+
+```bash id="y58r59"
+tail -120 logs/12_wps_compile_ungrib.log
+```
+
+Esse log mostra o erro real de compilação.
+
+
+## 4. Configuração principal do workflow
 
 A configuração principal usada neste tutorial é:
 
@@ -176,7 +495,7 @@ Esses executáveis ficam em:
 
 ---
 
-# 4. Arquivos necessários antes da rodada
+## 5. Arquivos necessários antes da rodada
 
 Esta seção é uma das mais importantes. Nem tudo é gerado pelo workflow. Alguns arquivos precisam existir antes da execução.
 
@@ -184,9 +503,9 @@ A configuração atual espera os arquivos nos caminhos definidos em `configs/jac
 
 ---
 
-## 4.1. Arquivos da malha MPAS
+### 5.1. Arquivos da malha MPAS
 
-### 4.1.1. `x1.10242.grid.nc`
+#### 5.1.1. `x1.10242.grid.nc`
 
 Caminho esperado:
 
@@ -208,7 +527,7 @@ Não é gerado pelo workflow da B.
 
 ---
 
-### 4.1.2. `x1.10242.graph.info`
+#### 5.1.2. `x1.10242.graph.info`
 
 Caminho esperado:
 
@@ -224,7 +543,7 @@ Não é gerado pelas etapas VBAL, HDIAG, NICAS, SO ou DIRAC.
 
 ---
 
-### 4.1.3. `x1.10242.graph.info.part.128`
+#### 5.1.3. `x1.10242.graph.info.part.128`
 
 Caminho esperado:
 
@@ -246,7 +565,7 @@ Não é gerado automaticamente durante VBAL/HDIAG/NICAS/SO/DIRAC.
 
 ---
 
-### 4.1.4. `x1.10242.invariant.nc`
+#### 5.1.4. `x1.10242.invariant.nc`
 
 Caminho esperado:
 
@@ -268,7 +587,7 @@ Não é gerado pelo workflow da B.
 
 ---
 
-## 4.2. Arquivos de namelist e streams
+### 5.2. Arquivos de namelist e streams
 
 Esses arquivos devem estar no diretório:
 
@@ -276,7 +595,7 @@ Esses arquivos devem estar no diretório:
 /p/projetos/monan_das/joao.gerd/external-inputs/mpasjedi_tutorial202509NCAR/MPAS_namelist_stream_physics_files
 ```
 
-### 4.2.1. `namelist.atmosphere_240km`
+#### 5.2.1. `namelist.atmosphere_240km`
 
 Representa as configurações de execução do MPAS para a malha de 240 km.
 
@@ -286,7 +605,7 @@ Ele deve existir antes da rodada.
 
 ---
 
-### 4.2.2. `streams.atmosphere_240km`
+#### 5.2.2. `streams.atmosphere_240km`
 
 Representa a configuração dos streams de entrada e saída do MPAS.
 
@@ -296,7 +615,7 @@ Ele deve existir antes da rodada.
 
 ---
 
-## 4.3. Arquivos `stream_list.atmosphere.*`
+### 5.3. Arquivos `stream_list.atmosphere.*`
 
 Os arquivos esperados são:
 
@@ -307,7 +626,7 @@ stream_list.atmosphere.control
 stream_list.atmosphere.ensemble
 ```
 
-### Onde devem estar antes da rodada
+#### 5.3.1. Onde devem estar antes da rodada
 
 Os arquivos de referência devem estar em:
 
@@ -317,7 +636,7 @@ Os arquivos de referência devem estar em:
 
 Durante a preparação das etapas, eles são linkados para os diretórios de execução.
 
-### Observação importante sobre `stream_list.atmosphere.control`
+#### 5.3.2. Observação importante sobre `stream_list.atmosphere.control`
 
 O workflow atual escreve o `stream_list.atmosphere.control` com as variáveis de controle da B:
 
@@ -331,7 +650,7 @@ surface_pressure
 
 Essas são as variáveis usadas pelo SABER/BUMP para calibrar a B.
 
-### O que representam
+#### 5.3.3. O que representam
 
 ```text
 analysis    variáveis esperadas no espaço de análise
@@ -342,9 +661,9 @@ ensemble    variáveis esperadas nos membros/amostras
 
 ---
 
-## 4.4. Arquivos `geovars.yaml` e `keptvars.yaml`
+### 5.4. Arquivos `geovars.yaml` e `keptvars.yaml`
 
-### `geovars.yaml`
+#### 5.4.1. `geovars.yaml`
 
 Caminho esperado:
 
@@ -358,7 +677,7 @@ Ele deve existir antes da rodada.
 
 ---
 
-### `keptvars.yaml`
+#### 5.4.2. `keptvars.yaml`
 
 Caminho esperado:
 
@@ -372,7 +691,7 @@ Ele deve existir antes da rodada.
 
 ---
 
-## 4.5. Arquivos físicos do MPAS
+### 5.5. Arquivos físicos do MPAS
 
 Os arquivos listados abaixo devem existir antes da rodada:
 
@@ -391,7 +710,7 @@ VEGPARM.TBL
 VERSION
 ```
 
-### Onde devem estar
+#### 5.5.1. Onde devem estar
 
 O workflow procura esses arquivos preferencialmente no diretório de compartilhamento da instalação do MPAS atmosphere:
 
@@ -405,7 +724,7 @@ Caso necessário, também podem estar no diretório de arquivos físicos do tuto
 /p/projetos/monan_das/joao.gerd/external-inputs/mpasjedi_tutorial202509NCAR/MPAS_namelist_stream_physics_files
 ```
 
-### O que representam
+#### 5.5.2. O que representam
 
 Esses arquivos são tabelas físicas usadas pelo MPAS. Eles contêm parâmetros de radiação, solo, vegetação, aerossóis, ozônio e outras informações fixas.
 
@@ -413,7 +732,7 @@ Eles não são produtos da matriz B. São arquivos auxiliares necessários para 
 
 ---
 
-## 4.6. Resumo: arquivos de entrada versus arquivos gerados
+### 5.6. Resumo: arquivos de entrada versus arquivos gerados
 
 | Arquivo                             |               Deve existir antes? | Gerado durante o workflow? | Papel                            |
 | ----------------------------------- | --------------------------------: | -------------------------: | -------------------------------- |
@@ -443,7 +762,7 @@ Eles não são produtos da matriz B. São arquivos auxiliares necessários para 
 
 ---
 
-# 5. Definir o período da rodada
+## 6. Definir o período da rodada
 
 Antes de gerar a B, é necessário definir o período usado para formar as amostras NMC.
 
@@ -469,9 +788,9 @@ Quatro amostras são o mínimo técnico para HDIAG/NICAS. Para uma B de produç�
 
 ---
 
-# 6. BFLOW: o que é e por que existe?
+## 7. BFLOW: o que é e por que existe?
 
-## 6.1. O que é BFLOW?
+### 7.1. O que é BFLOW?
 
 BFLOW é a etapa de preparação das amostras estatísticas usadas para calibrar a matriz B.
 
@@ -494,7 +813,7 @@ ambas válidas em 2026-06-12 00 UTC
 
 A diferença entre elas é usada como aproximação estatística do erro do background.
 
-## 6.2. Por que BFLOW é feito antes de tudo?
+### 7.2. Por que BFLOW é feito antes de tudo?
 
 Porque VBAL, HDIAG e NICAS precisam de amostras. Sem amostras NMC, não há como calcular:
 
@@ -508,7 +827,7 @@ comprimento de correlação vertical
 
 Então o BFLOW é a base estatística de todo o processo.
 
-## 6.3. O que o BFLOW gera?
+### 7.3. O que o BFLOW gera?
 
 Para cada data válida, espera-se gerar:
 
@@ -534,7 +853,7 @@ Esse manifesto informa às etapas seguintes onde estão as amostras.
 
 ---
 
-# 7. Gerar as amostras NMC
+## 8. Gerar as amostras NMC
 
 Entre no repositório:
 
@@ -570,7 +889,7 @@ work/mpas-bmatrix-global/bmatrix/bflow_preprocessing/np128_2026061000_2026061300
 
 ---
 
-# 8. Preparar o workspace BFLOW
+## 9. Preparar o workspace BFLOW
 
 Depois que as diferenças NMC existem, defina:
 
@@ -598,9 +917,9 @@ PTB_f48mf24_004.nc
 
 ---
 
-# 9. VBAL: balanço vertical e multivariado
+## 10. VBAL: balanço vertical e multivariado
 
-## 9.1. O que é VBAL?
+### 10.1. O que é VBAL?
 
 VBAL significa Vertical Balance.
 
@@ -620,11 +939,11 @@ qual parte desse erro aparece de forma balanceada em temperatura,
 potencial de velocidade e pressão de superfície?
 ```
 
-## 9.2. Por que VBAL vem depois do BFLOW?
+### 10.2. Por que VBAL vem depois do BFLOW?
 
 Porque o VBAL precisa das perturbações NMC. Ele calcula relações estatísticas a partir das amostras `PTB_f48mf24`.
 
-## 9.3. Rodar VBAL
+### 10.3. Rodar VBAL
 
 ```bash
 export VBAL=/p/projetos/monan_das/joao.gerd/work/mpas-bmatrix-global/bmatrix/covariance/vbal/np128_2026061000_2026061300
@@ -637,7 +956,7 @@ mpasbcov vbal-all \
   --poll-seconds 30
 ```
 
-## 9.4. Produtos esperados do VBAL
+### 10.4. Produtos esperados do VBAL
 
 ```text
 $VBAL/samples/PTB_f48mf24_001.nc
@@ -653,7 +972,7 @@ $VBAL/VBAL/run_vbal.yaml
 $VBAL/VBAL/run_vbal.runlog
 ```
 
-## 9.5. O que esses arquivos representam?
+### 10.5. O que esses arquivos representam?
 
 ```text
 mpas_sampling.nc
@@ -677,7 +996,7 @@ cov_c2
 explained_var_c2
 ```
 
-## 9.6. Validação
+### 10.6. Validação
 
 ```bash
 mpasbcov vbal-validate --workspace "$VBAL"
@@ -691,9 +1010,9 @@ SUCCESS: VBAL validado.
 
 ---
 
-# 10. HDIAG: desvio padrão e escalas de correlação
+## 11. HDIAG: desvio padrão e escalas de correlação
 
-## 10.1. O que é HDIAG?
+### 11.1. O que é HDIAG?
 
 HDIAG é a etapa que calcula diagnósticos estatísticos da B, principalmente:
 
@@ -703,7 +1022,7 @@ cor_rh   escala horizontal de correlação
 cor_rv   escala vertical de correlação
 ```
 
-## 10.2. Por que HDIAG vem depois do VBAL?
+### 11.2. Por que HDIAG vem depois do VBAL?
 
 Porque o HDIAG precisa considerar o balanço vertical calibrado. No tutorial antigo, isso era feito usando amostras desbalanceadas. No SABER atual, o workflow lê os PTBs originais e aplica o `BUMP_VerticalBalance` em modo leitura dentro do próprio HDIAG.
 
@@ -715,7 +1034,7 @@ VBAL calibra balanço
 HDIAG calcula estatísticas usando esse balanço
 ```
 
-## 10.3. Rodar HDIAG
+### 11.3. Rodar HDIAG
 
 ```bash
 export HDIAG=/p/projetos/monan_das/joao.gerd/work/mpas-bmatrix-global/bmatrix/covariance/hdiag/np128_2026061000_2026061300
@@ -728,7 +1047,7 @@ mpasbcov hdiag-all \
   --poll-seconds 30
 ```
 
-## 10.4. Produtos esperados do HDIAG
+### 11.4. Produtos esperados do HDIAG
 
 ```text
 $HDIAG/HDIAG/mpas.stddev.nc
@@ -738,7 +1057,7 @@ $HDIAG/HDIAG/run_hdiag.yaml
 $HDIAG/HDIAG/run_hdiag.runlog
 ```
 
-## 10.5. O que esses arquivos representam?
+### 11.5. O que esses arquivos representam?
 
 ```text
 mpas.stddev.nc
@@ -753,7 +1072,7 @@ mpas.cor_rv.nc
 
 Esses arquivos serão usados depois pelo NICAS e pela B final.
 
-## 10.6. Validação
+### 11.6. Validação
 
 ```bash
 mpasbcov hdiag-validate --workspace "$HDIAG"
@@ -767,13 +1086,13 @@ SUCCESS: HDIAG validado.
 
 ---
 
-# 11. NICAS: construção da correlação
+## 12. NICAS: construção da correlação
 
-## 11.1. O que é NICAS?
+### 12.1. O que é NICAS?
 
 NICAS é o bloco que constrói uma representação eficiente da correlação espacial da B. Ele usa as escalas calculadas no HDIAG para definir como o erro se espalha horizontal e verticalmente.
 
-## 11.2. Por que NICAS vem depois do HDIAG?
+### 12.2. Por que NICAS vem depois do HDIAG?
 
 Porque NICAS precisa dos arquivos:
 
@@ -785,7 +1104,7 @@ mpas.stddev.nc
 
 O NICAS usa principalmente as escalas de correlação horizontal e vertical para construir o operador de correlação.
 
-## 11.3. Rodar NICAS
+### 12.3. Rodar NICAS
 
 ```bash
 export NICAS=/p/projetos/monan_das/joao.gerd/work/mpas-bmatrix-global/bmatrix/covariance/nicas/np128_2026061000_2026061300
@@ -799,7 +1118,7 @@ mpasbcov nicas-all \
   --poll-seconds 30
 ```
 
-## 11.4. Produtos esperados do NICAS
+### 12.4. Produtos esperados do NICAS
 
 Por variável:
 
@@ -821,7 +1140,7 @@ $NICAS/merge/mpas_nicas_local_*
 $NICAS/merge/mpas_nicas_grids_local_*
 ```
 
-## 11.5. O que esses arquivos representam?
+### 12.5. O que esses arquivos representam?
 
 ```text
 mpas_nicas.nc
@@ -840,7 +1159,7 @@ mpas.dirac_nicas.nc
   resposta Dirac do NICAS puro
 ```
 
-## 11.6. Validação
+### 12.6. Validação
 
 ```bash
 mpasbcov nicas-validate --workspace "$NICAS"
@@ -854,15 +1173,15 @@ SUCCESS: NICAS split/merge validado.
 
 ---
 
-# 12. SO: teste de observação única
+## 13. SO: teste de observação única
 
-## 12.1. O que é SO?
+### 13.1. O que é SO?
 
 SO significa Single Observation Test.
 
 Ele testa a B completa dentro de uma assimilação variacional com uma observação sintética. Ele não calibra a B. Ele verifica se a B já construída responde de forma física.
 
-## 12.2. Por que SO vem depois de NICAS?
+### 13.2. Por que SO vem depois de NICAS?
 
 Porque o SO usa a B completa, ou seja:
 
@@ -875,7 +1194,7 @@ Control2Analysis
 
 Sem NICAS, HDIAG e VBAL, o SO não tem a B completa para testar.
 
-## 12.3. Rodar SO
+### 13.3. Rodar SO
 
 ```bash
 export SO=/p/projetos/monan_das/joao.gerd/work/mpas-bmatrix-global/bmatrix/covariance/so/np128_2026061000_2026061300
@@ -892,7 +1211,7 @@ mpasbcov so-all \
   --poll-seconds 30
 ```
 
-## 12.4. Produtos esperados do SO
+### 13.4. Produtos esperados do SO
 
 ```text
 $SO/run_SO.yaml
@@ -902,7 +1221,7 @@ $SO/obsout_SO_U.h5
 $SO/an.*.nc
 ```
 
-## 12.5. O que esses arquivos representam?
+### 13.5. O que esses arquivos representam?
 
 ```text
 obsout_SO_T.h5
@@ -918,7 +1237,7 @@ run_SO.runlog
   log da execução variacional
 ```
 
-## 12.6. Validação
+### 13.6. Validação
 
 ```bash
 mpasbcov so-validate \
@@ -934,13 +1253,13 @@ SUCCESS: SO validado.
 
 ---
 
-# 13. DIRAC: resposta da B completa
+## 14. DIRAC: resposta da B completa
 
-## 13.1. O que é DIRAC?
+### 14.1. O que é DIRAC?
 
 DIRAC é um teste de impulso. Ele aplica uma perturbação pontual em uma variável e mostra como a B completa espalha essa perturbação.
 
-## 13.2. Por que DIRAC vem depois de NICAS, HDIAG e VBAL?
+### 14.2. Por que DIRAC vem depois de NICAS, HDIAG e VBAL?
 
 Porque ele usa a B completa:
 
@@ -953,7 +1272,7 @@ Control2Analysis
 
 O DIRAC testa a estrutura matemática da B. O SO testa a B dentro da assimilação variacional.
 
-## 13.3. Rodar DIRAC
+### 14.3. Rodar DIRAC
 
 ```bash
 export DIRAC=/p/projetos/monan_das/joao.gerd/work/mpas-bmatrix-global/bmatrix/covariance/dirac/np128_2026061000_2026061300
@@ -969,7 +1288,7 @@ mpasbcov dirac-all \
   --poll-seconds 30
 ```
 
-## 13.4. Produtos esperados do DIRAC
+### 14.4. Produtos esperados do DIRAC
 
 ```text
 $DIRAC/run_dirac.yaml
@@ -977,14 +1296,14 @@ $DIRAC/run_dirac.runlog
 $DIRAC/mpas.dirac.nc
 ```
 
-## 13.5. O que esses arquivos representam?
+### 14.5. O que esses arquivos representam?
 
 ```text
 mpas.dirac.nc
   resposta da B completa a um impulso
 ```
 
-## 13.6. Validação
+### 14.6. Validação
 
 ```bash
 mpasbcov dirac-validate --workspace "$DIRAC"
@@ -1017,7 +1336,7 @@ mpasbcov dirac-plot \
 
 ---
 
-# 14. Qual é o arquivo final da matriz B?
+## 15. Qual é o arquivo final da matriz B?
 
 Esta é uma questão importante: a B final não é um único arquivo.
 
@@ -1025,7 +1344,7 @@ No MPAS-JEDI/SABER, a matriz B estática é usada como um conjunto de arquivos e
 
 A B final é composta por:
 
-## 14.1. Produtos NICAS
+### 15.1. Produtos NICAS
 
 Diretório principal:
 
@@ -1052,7 +1371,7 @@ mpas.dirac_nicas.nc
 
 Esses dois são úteis para validação, mas o operador principal usado pela B é o NICAS.
 
-## 14.2. Produto StdDev
+### 15.2. Produto StdDev
 
 Arquivo:
 
@@ -1064,7 +1383,7 @@ Esse arquivo representa a amplitude dos erros.
 
 Ele é lido pelo bloco `StdDev`.
 
-## 14.3. Produtos VBAL
+### 15.3. Produtos VBAL
 
 Diretório principal:
 
@@ -1083,7 +1402,7 @@ mpas_sampling_local_*
 
 Esses arquivos representam o balanço vertical e multivariado.
 
-## 14.4. Configuração YAML no MPAS-JEDI
+### 15.4. Configuração YAML no MPAS-JEDI
 
 Na assimilação, a B deve ser configurada no YAML do MPAS-JEDI como uma composição de blocos SABER:
 
@@ -1126,7 +1445,7 @@ A B final não é um único arquivo.
 Ela é composta por produtos NICAS, StdDev, VBAL e pela configuração SABER no YAML.
 ```
 
-## 14.5. Conjunto mínimo de arquivos para usar a B no MPAS-JEDI
+### 15.5. Conjunto mínimo de arquivos para usar a B no MPAS-JEDI
 
 Para usar a B em uma assimilação 3DVar/FGAT, mantenha:
 
@@ -1161,9 +1480,9 @@ $SO/an.*.nc
 
 ---
 
-# 15. Diagnósticos recomendados
+## 16. Diagnósticos recomendados
 
-## 15.1. VBAL
+### 16.1. VBAL
 
 ```bash
 python -m mpas_workflow.vbal_groups \
@@ -1175,7 +1494,7 @@ python -m mpas_workflow.vbal_groups \
 
 Esse diagnóstico mostra a variância explicada e os coeficientes de regressão do balanço vertical.
 
-## 15.2. HDIAG
+### 16.2. HDIAG
 
 ```bash
 python -m mpas_workflow.hdiag_summary \
@@ -1188,7 +1507,7 @@ python -m mpas_workflow.hdiag_summary \
 
 Esse diagnóstico mostra perfis, estatísticas e histogramas de `stddev`, `cor_rh` e `cor_rv`.
 
-## 15.3. NICAS
+### 16.3. NICAS
 
 ```bash
 python -m mpas_workflow.nicas_summary \
@@ -1202,7 +1521,7 @@ python -m mpas_workflow.nicas_summary \
 
 Esse diagnóstico avalia os produtos NICAS.
 
-## 15.4. DIRAC
+### 16.4. DIRAC
 
 ```bash
 mpasbcov dirac-summary \
@@ -1219,7 +1538,7 @@ mpasbcov dirac-plot \
 
 ---
 
-# 16. Verificação final
+## 17. Verificação final
 
 Ao final, rode:
 
@@ -1255,7 +1574,7 @@ ls -lh "$DIRAC/mpas.dirac.nc"
 
 ---
 
-# 17. Diferença entre smoke test e produção
+## 18. Diferença entre smoke test e produção
 
 O smoke test usa poucos membros para validar o funcionamento técnico do workflow.
 
@@ -1289,7 +1608,7 @@ validação com experimentos reais de assimilação
 
 ---
 
-# 18. Resumo final
+## 19. Resumo final
 
 O processo completo é:
 
