@@ -12,7 +12,7 @@ PTB = previsão de 48h - previsão de 24h
 
 As duas previsões precisam ter o mesmo horário válido. O BFLOW não roda a assimilação variacional; ele produz o ensemble/amostra de perturbações que será lido por `VBAL`, `HDIAG` e, indiretamente, por `NICAS`.
 
-A etapa aparece depois da geração dos forecasts MPAS/NMC e antes da calibração da B. Sem os `PTB_f48mf24.nc`, o workflow não tem amostras para estimar covariância vertical, balanço, desvio padrão ou escalas de correlação.
+A etapa aparece depois da geração das previsões MPAS/NMC e antes da calibração da B. Sem os `PTB_f48mf24.nc`, o workflow não tem amostras para estimar covariância vertical, balanço, desvio padrão ou escalas de correlação.
 
 ## 2. Arquivos relacionados
 
