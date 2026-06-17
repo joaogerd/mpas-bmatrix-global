@@ -5,7 +5,7 @@ Este diretório documenta, em arquivos separados, os processos usados no workflo
 A cadeia operacional validada no repositório é:
 
 ```text
-BFLOW -> NMC -> VBAL -> HDIAG -> NICAS -> SO -> DIRAC
+NMC -> BFLOW -> VBAL -> HDIAG -> NICAS -> SO -> DIRAC
 ```
 
 No código atual, `NMC` gera ou organiza os pares de previsões `f048` e `f024`; `BFLOW` transforma esses pares em amostras `PTB_f48mf24.nc`; `VBAL`, `HDIAG` e `NICAS` calibram os componentes estatísticos da B; `SO` e `DIRAC` validam a B pronta, respectivamente em um teste variacional com observação sintética e em um teste de impulso.
