@@ -66,7 +66,7 @@ def test_bflow_renderers_take_field_names_and_formula_values_from_configuration(
     assert "ncrename -O -v theta,stream_function" in template
     assert "potential_temperature_to_temperature" in derived
     assert "mixing_ratio_to_specific_humidity" in derived
-    assert "f48_minus_f24" in ncdiff
+    assert 'CONFIG["nmc"]["older_label"]' in ncdiff
     assert '"full_required"' in validate
 
 
