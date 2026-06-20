@@ -1,8 +1,5 @@
 # Contrato científico da matriz B estática MPAS-JEDI/SABER.
-#
-# Este arquivo contém somente escolhas científicas e de interface de variáveis.
 # Caminhos, malha, PBS e ambiente permanecem em jaci-x1.10242.yaml.
-#
 # `code` é o nome canônico usado pelo MPAS-JEDI/SABER.
 # `file` é o nome físico presente nos PTBs e nos arquivos MPAS NetCDF.
 
@@ -147,7 +144,7 @@ dirac:
   index: 10
   variable: air_temperature
   latitudes: [30.31011691, 26.56505123, 35.68501691, 19.01699038, 19.44244244, 31.21645245, -23.55867959, 40.74997906, 24.86999229, -34.60250161, 28.6699929, 55.75216412, 41.10499615, 23.72305971, 30.04996035, 37.5663491, 22.4949693, 39.92889223, -6.174417705, 33.98997825, 51.49999473, 35.67194277]
-  longitudes: [130.11182691, -102.95294521, 139.7514074, 72.8569893, -99.1309882, 121.4365047, -46.62501998, -73.98001693, 66.99000891, -58.39753137, 77.23000403, 37.61552283, 29.01000159, 90.40857947, 31.24996822, 126.999731, 88.32467566, 116.3882857, 106.8294376, -118.1799805, -0.116721844, 51.42434403]
+  longitudes: [130.11182691, -102.95294521, 139.7514074, 72.8569893, -99.1309882, 121.4365047, -46.62501998, -73.98001693, 66.99000891, -58.39753137, 77.23000403, 29.01000159, 90.40857947, 31.24996822, 126.999731, 88.32467566, 116.3882857, 106.8294376, -118.1799805, -0.116721844, 51.42434403]
 
 single_observation:
   window_hours_before_analysis: 3
@@ -210,13 +207,11 @@ bflow:
     newer_lead_hours: 24
     older_label: f48
     newer_label: f24
-
   products:
     template: template_PTB.nc
     older_full: FULL_f48.nc
     newer_full: FULL_f24.nc
     perturbation: PTB_f48mf24.nc
-
   regridding:
     module_load: module load ncl netcdf 2>/dev/null || module load ncl 2>/dev/null || true
     ncl_module_load: module load ncl 2>/dev/null || true
@@ -229,9 +224,8 @@ bflow:
     weight_mpas_to_latlon: MPAS_{mesh_name}_to_latlon_1p0_bilinear.nc
     lower_left: [-89.5, -179.5]
     upper_right: [89.5, 179.5]
-    title: Fixed latitude-longitude grid: 1.0 degree
+    title: "Fixed latitude-longitude grid: 1.0 degree"
     precision_probe_variable: latCell
-
   wind_transform:
     zonal_file_variable: uReconstructZonal
     meridional_file_variable: uReconstructMeridional
@@ -249,7 +243,6 @@ bflow:
         long_name: velocity potential
         units: m^2 s^(-2)
         scale: -1.0
-
   copy_variables:
     - surface_pressure
     - uReconstructZonal
@@ -262,7 +255,6 @@ bflow:
     - qg
     - pressure_p
     - pressure_base
-
   derived_variables:
     - output_file: pressure
       operation: sum
@@ -288,7 +280,6 @@ bflow:
       attributes:
         long_name: specific humidity
         units: kg kg-1
-
   validation:
     full_required:
       - stream_function
