@@ -1,8 +1,5 @@
 # Contrato científico da matriz B estática MPAS-JEDI/SABER.
-#
-# Este arquivo contém somente escolhas científicas e de interface de variáveis.
 # Caminhos, malha, PBS e ambiente permanecem em jaci-x1.10242.yaml.
-#
 # `code` é o nome canônico usado pelo MPAS-JEDI/SABER.
 # `file` é o nome físico presente nos PTBs e nos arquivos MPAS NetCDF.
 
@@ -27,29 +24,23 @@ controls:
 
 vbal:
   files_prefix: mpas
-
-  # Ordem usada para construir os nomes compostos dos grupos NetCDF do VBAL.
-  # Não altere sem regenerar VBAL, HDIAG e NICAS.
   group_variable_order:
     - air_horizontal_streamfunction
     - water_vapor_mixing_ratio_wrt_moist_air
     - air_horizontal_velocity_potential
     - air_temperature
     - air_pressure_at_surface
-
   drivers:
     write_local_sampling: true
     write_global_sampling: true
     compute_vertical_covariance: true
     compute_vertical_balance: true
     write_vertical_balance: true
-
   sampling:
     computation grid size: 12000
     diagnostic grid size: 200
     reduced levels: 55
     averaging latitude width: 10.0
-
   relations:
     - balanced_variable: air_horizontal_velocity_potential
       unbalanced_variable: air_horizontal_streamfunction
@@ -58,17 +49,14 @@ vbal:
       unbalanced_variable: air_horizontal_streamfunction
     - balanced_variable: air_pressure_at_surface
       unbalanced_variable: air_horizontal_streamfunction
-
   pseudo_inverse: true
   dominant_mode: 20
 
 hdiag:
-  # BUMP requer ens_ne/ens_nsub > 3.
   min_members: 4
   files_prefix: mpas
   bump_vunit: avgheight
   iterative_ensemble_loading: true
-
   drivers:
     compute covariance: true
     compute correlation: true
@@ -77,7 +65,6 @@ hdiag:
     compute variance: true
     compute moments: true
     write diagnostics: true
-
   sampling:
     computation grid size: 12000
     diagnostic grid size: 1000
@@ -86,7 +73,6 @@ hdiag:
     reduced levels: 10
     local diagnostic: true
     averaging length-scale: 3000000.0
-
   variance:
     objective_filtering: true
     filtering_iterations: 1
@@ -98,18 +84,13 @@ hdiag:
           - water_vapor_mixing_ratio_wrt_moist_air
           - air_pressure_at_surface
         value: 3000000.0
-
   fit:
     horizontal filtering length-scale: 3000000.0
 
 nicas:
   files_prefix: mpas
   bump_vunit: avgheight
-
-  # Para variáveis 3d, o nível padrão é nVertLevels - dirac_level_from_top + 1.
-  # Para a única variável 2d, o nível é sempre 1.
   dirac_level_from_top: 20
-
   drivers:
     multivariate strategy: univariate
     compute nicas: true
@@ -117,11 +98,9 @@ nicas:
     write global nicas: true
     write nicas grids: true
     internal dirac test: true
-
   nicas:
     resolution: 8
     max horizontal grid size: 15000
-
   dirac_points:
     - longitude: -45.0
       latitude: 0.0
@@ -173,16 +152,12 @@ single_observation:
   minimizer: DRPCG
   ninner: 10
   gradient_norm_reduction: 1e-3
-
-  # Espaço de análise após Control2Analysis.
   analysis_variables:
     - eastward_wind
     - northward_wind
     - air_temperature
     - water_vapor_mixing_ratio_wrt_moist_air
     - air_pressure_at_surface
-
-  # Campos necessários para o background sintético do teste SO e para os operadores UFO.
   background_variables:
     - spechum
     - surface_pressure
@@ -200,7 +175,6 @@ single_observation:
     - qv
     - pressure
     - pressure_p
-
   observations:
     temperature:
       name: SO_T
@@ -220,8 +194,107 @@ single_observation:
       error: 1.0
       value: 0.7250047
       output_file: obsout_SO_U.h5
-
   variants:
     default: [temperature, eastward_wind]
     t-only: [temperature]
     u-only: [eastward_wind]
+
+# Configuração física e estatística do pré-processamento BFLOW/NMC.
+# Alterações neste bloco exigem gerar um novo workspace BFLOW.
+bflow:
+  nmc:
+    older_lead_hours: 48
+    newer_lead_hours: 24
+    older_label: f48
+    newer_label: f24
+  products:
+    template: template_PTB.nc
+    older_full: FULL_f48.nc
+    newer_full: FULL_f24.nc
+    perturbation: PTB_f48mf24.nc
+  regridding:
+    module_load: module load ncl netcdf 2>/dev/null || module load ncl 2>/dev/null || true
+    ncl_module_load: module load ncl 2>/dev/null || true
+    mpas_grid_file: MPAS_{mesh_name}.nc
+    scrip_grid_file: SCRIP_latlon_1p0.nc
+    esmf_grid_file: ESMF_MPAS_{mesh_name}.nc
+    scrip_resolution: 1.0deg
+    interpolation_method: bilinear
+    weight_latlon_to_mpas: latlon_1p0_to_MPAS_{mesh_name}_bilinear.nc
+    weight_mpas_to_latlon: MPAS_{mesh_name}_to_latlon_1p0_bilinear.nc
+    lower_left: [-89.5, -179.5]
+    upper_right: [89.5, 179.5]
+    title: "Fixed latitude-longitude grid: 1.0 degree"
+    precision_probe_variable: latCell
+  wind_transform:
+    zonal_file_variable: uReconstructZonal
+    meridional_file_variable: uReconstructMeridional
+    template_file_variable: theta
+    radius_numerator_m: 6371229.0
+    radius_denominator_m: 6371220.0
+    outputs:
+      stream_function:
+        output_control: air_horizontal_streamfunction
+        long_name: stream function
+        units: m^2 s^(-2)
+        scale: 1.0
+      velocity_potential:
+        output_control: air_horizontal_velocity_potential
+        long_name: velocity potential
+        units: m^2 s^(-2)
+        scale: -1.0
+  copy_variables:
+    - surface_pressure
+    - uReconstructZonal
+    - uReconstructMeridional
+    - qv
+    - qc
+    - qr
+    - qi
+    - qs
+    - qg
+    - pressure_p
+    - pressure_base
+  derived_variables:
+    - output_file: pressure
+      operation: sum
+      inputs: [pressure_p, pressure_base]
+      template_file: pressure_p
+      attributes:
+        long_name: pressure
+        units: Pa
+    - output_control: air_temperature
+      operation: potential_temperature_to_temperature
+      theta_file: theta
+      pressure_file: pressure
+      reference_pressure_pa: 100000.0
+      exponent: 0.2857142857142857
+      template_file: theta
+      attributes:
+        long_name: temperature
+        units: K
+    - output_control: water_vapor_mixing_ratio_wrt_moist_air
+      operation: mixing_ratio_to_specific_humidity
+      mixing_ratio_file: qv
+      template_file: qv
+      attributes:
+        long_name: specific humidity
+        units: kg kg-1
+  validation:
+    full_required:
+      - stream_function
+      - velocity_potential
+    ptb_required:
+      - stream_function
+      - velocity_potential
+      - temperature
+      - spechum
+      - pressure
+      - surface_pressure
+      - uReconstructZonal
+      - uReconstructMeridional
+    dimension_checks:
+      - file: stream_function
+        dimensions: [Time, nCells, nVertLevels]
+      - file: velocity_potential
+        dimensions: [Time, nCells, nVertLevels]
