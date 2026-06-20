@@ -28,6 +28,11 @@ static:
   geovars: /p/projetos/monan_das/joao.gerd/projects/MONAN-JEDI/mpas-jedi/test/testinput/namelists/geovars.yaml
   keptvars: /p/projetos/monan_das/joao.gerd/projects/MONAN-JEDI/mpas-jedi/test/testinput/namelists/keptvars.yaml
 
+# Parâmetros científicos, variáveis de controle e convenções code<->file
+# ficam isolados no arquivo abaixo. Assim, mudanças na B não exigem editar Python.
+bmatrix:
+  configuration: bmatrix-x1.10242.yaml
+
 wps:
   root: /p/projetos/monan_das/joao.gerd/data/mpas-bmatrix-global/external/WPS/WPS-4.6.0
   ungrib_exe: /p/projetos/monan_das/joao.gerd/data/mpas-bmatrix-global/external/WPS/WPS-4.6.0/ungrib.exe
