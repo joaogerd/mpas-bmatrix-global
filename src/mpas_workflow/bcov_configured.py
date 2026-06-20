@@ -263,6 +263,7 @@ def _geometry_yaml(
     *,
     deallocate: bool = False,
     bump_vunit: str | None = None,
+    include_alias: bool = True,
 ) -> str:
     prefix = " " * indent
     lines = [
@@ -273,8 +274,9 @@ def _geometry_yaml(
         lines.append(f"{prefix}deallocate non-da fields: true")
     if bump_vunit:
         lines.append(f"{prefix}bump vunit: {_yaml_scalar(bump_vunit)}")
-    lines.append(f"{prefix}alias:")
-    lines.append(contract.alias_yaml(indent + 2))
+    if include_alias:
+        lines.append(f"{prefix}alias:")
+        lines.append(contract.alias_yaml(indent + 2))
     return "\n".join(lines)
 
 
@@ -576,7 +578,7 @@ variational:
     algorithm: {so['minimizer']}
   iterations:
   - geometry:
-{_geometry_yaml(contract, 6)}
+{_geometry_yaml(contract, 6, include_alias=False)}
     gradient norm reduction: {so['gradient_norm_reduction']}
     diagnostics:
       departures: ombg
@@ -593,7 +595,7 @@ cost function:
     length: PT{so['window_hours']}H
   jb evaluation: false
   geometry:
-{_geometry_yaml(contract, 4, deallocate=True)}
+{_geometry_yaml(contract, 4, deallocate=True, include_alias=False)}
   analysis variables: &incvars
 {_yaml_list(so['analysis_variables'], 2)}
   background:
@@ -660,7 +662,7 @@ def _write_dirac_yaml(
     latitudes = ", ".join(str(value) for value in dirac["latitudes"])
     longitudes = ", ".join(str(value) for value in dirac["longitudes"])
     text = f"""geometry:
-{_geometry_yaml(contract, 2, deallocate=True)}
+{_geometry_yaml(contract, 2, deallocate=True, include_alias=False)}
 background:
   state variables: &incvars
 {_yaml_list(so['analysis_variables'], 2)}
