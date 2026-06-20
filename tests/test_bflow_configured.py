@@ -1,7 +1,9 @@
+import json
 from pathlib import Path
 
 import yaml
 
+from mpas_workflow.bcov_bflow_configured import read_bflow_samples
 from mpas_workflow.bcov_configured import BMatrixContract
 from mpas_workflow.bflow_configured import (
     BFlowConfiguration,
@@ -111,3 +113,34 @@ def test_bflow_build_pairs_uses_configured_nmc_lead_times(monkeypatch):
         ("2018-04-13_00:00:00", 48, 60),
         ("2018-04-14_00:00:00", 24, 60),
     ]
+
+
+def test_covariance_reader_uses_bflow_product_snapshot(tmp_path):
+    value = configuration()
+    forecast = tmp_path / "forecast_recent.nc"
+    forecast.touch()
+    output = tmp_path / "output" / "2018041500"
+    output.mkdir(parents=True)
+    (output / "custom_ptb.nc").touch()
+    (output / "custom_full_recent.nc").touch()
+    (tmp_path / "manifest.tsv").write_text(
+        "valid_time\tf048\tf024\n"
+        f"2018-04-15_00:00:00\t/tmp/forecast_old.nc\t{forecast}\n"
+    )
+    (tmp_path / "bflow_config.json").write_text(
+        json.dumps(
+            {
+                "products": {
+                    "perturbation": "custom_ptb.nc",
+                    "newer_full": "custom_full_recent.nc",
+                }
+            }
+        )
+    )
+
+    samples = read_bflow_samples(tmp_path, value)
+
+    assert len(samples) == 1
+    assert samples[0].ptb.name == "custom_ptb.nc"
+    assert samples[0].full_f24.name == "custom_full_recent.nc"
+    assert samples[0].template_fields == forecast
