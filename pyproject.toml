@@ -31,7 +31,8 @@ dev = [
 mpaswf = "mpas_workflow.cli:main"
 mpasbm = "mpas_workflow.bmatrix:main"
 mpasbflow = "mpas_workflow.bflow:main"
-mpasbcov = "mpas_workflow.bcov:main"
+mpasbcov = "mpas_workflow.bcov_configured:main"
+mpasbcov-legacy = "mpas_workflow.bcov:main"
 mpasbcov-pipeline = "mpas_workflow.bcov_pipeline:main"
 mpasdirac-summary = "mpas_workflow.dirac_summary:main"
 
