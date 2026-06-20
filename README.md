@@ -18,9 +18,17 @@ Para ver as opções disponíveis:
 scripts/mpaswf --help
 ```
 
-Configuração padrão JACI:
+Configuração de infraestrutura padrão JACI:
 
 [configs/jaci-x1.10242.yaml](configs/jaci-x1.10242.yaml)
+
+Configuração científica da B, incluindo VBAL, HDIAG, NICAS, DIRAC, SO e BFLOW:
+
+[configs/bmatrix-x1.10242.yaml](configs/bmatrix-x1.10242.yaml)
+
+Guia para separar e alterar configurações do BFLOW:
+
+[docs/bflow-configuration.md](docs/bflow-configuration.md)
 
 ## Documentação do sistema
 
@@ -46,4 +54,3 @@ Resumo operacional da infraestrutura JACI, filas PBS, tempos máximos, tipos de 
 export PYTHONPATH=$PWD/src:$PYTHONPATH
 scripts/mpaswf nmc one-pair --old-init-time 2026-06-10_00:00:00 --new-init-time 2026-06-11_00:00:00 --valid-time 2026-06-12_00:00:00 --dt 60 --submit
 ```
-
