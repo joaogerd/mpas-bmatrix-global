@@ -99,3 +99,22 @@ def test_configured_nicas_and_dirac_use_canonical_control_names(tmp_path):
     assert "- air_horizontal_velocity_potential" in dirac_text
     assert "dirvar: air_temperature" in dirac_text
     assert "dirvar: temperature" not in dirac_text
+    assert "alias:" not in dirac_text
+
+
+def test_configured_so_uses_canonical_variables_without_aliases(tmp_path):
+    legacy = configured_legacy()
+    yaml_path = tmp_path / "run_SO.yaml"
+
+    legacy.write_so_yaml(
+        yaml_path,
+        date="2018-04-15T00:00:00Z",
+        nicas_dir=Path("/tmp/nicas"),
+        stddev_file=Path("/tmp/mpas.stddev.nc"),
+        vbal_dir=Path("/tmp/vbal"),
+    )
+
+    text = yaml_path.read_text()
+    assert "- air_horizontal_streamfunction" in text
+    assert "- water_vapor_mixing_ratio_wrt_moist_air" in text
+    assert "alias:" not in text
