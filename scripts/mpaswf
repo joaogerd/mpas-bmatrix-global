@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+
+# Always prefer the package checked out in this repository. This keeps the
+# launcher and pytest usable even when the active Spack Python and pip point
+# to different site-packages locations.
+export PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
+
 PYTHON=${PYTHON:-python3}
-exec "$PYTHON" -m mpas_workflow "$@"
+exec "${PYTHON}" -m mpas_workflow "$@"
