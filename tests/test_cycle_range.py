@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 
 import pytest
 
@@ -59,6 +58,7 @@ def test_dry_run_writes_a_resumable_manifest(tmp_path):
     config = {
         "project": {"work_root": str(tmp_path)},
         "runtime": {"config_dt": 1200},
+        "mesh": {"name": "x1.test", "nproc": 1},
     }
     manifest_path = tmp_path / "range.json"
 
