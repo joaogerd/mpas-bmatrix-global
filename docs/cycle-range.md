@@ -41,6 +41,8 @@ precisa ter acesso à rotina configurada de download.
 - `--submit` sem `--wait` submete somente o primeiro estágio pendente e encerra
   com o manifesto atualizado. Execute o mesmo comando novamente depois de o
   job terminar para continuar.
+- Ao retomar, um `init_jobid` ou `forecast_jobid` que ainda aparece no `qstat`
+  é reconhecido como ativo; o launcher não prepara nem submete uma cópia do job.
 - Sem `--submit`, o comando apenas prepara o primeiro estágio pendente para
   inspeção manual.
 - `--no-download` impede downloads implícitos e falha de forma explícita quando
