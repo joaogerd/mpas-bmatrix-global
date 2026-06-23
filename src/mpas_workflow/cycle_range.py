@@ -1,10 +1,9 @@
 """Execute a resumable range of MPAS init + forecast cycles.
 
 This module deliberately reuses the existing ``ungrib``, ``init`` and
-``forecast`` implementations.  It does not submit dependent PBS jobs in a
-single burst: with ``--submit --wait`` it validates each init before preparing
-and submitting its forecast, which keeps failures local to one analysis time
-and makes resume deterministic.
+``forecast`` implementations. It validates each init before preparing and
+submitting its forecast, which keeps failures local to one analysis time and
+makes resume deterministic.
 """
 
 from __future__ import annotations
@@ -24,7 +23,7 @@ from .mpas_init import (
     submit_init,
     validate_init,
 )
-from .shell import wait_for_pbs_job
+from .shell import pbs_job_exists, wait_for_pbs_job
 from .wps import run_ungrib, ungrib_run_dir
 
 
@@ -160,6 +159,63 @@ def _cycle_state(
     return "pending"
 
 
+def _resume_active_init(
+    config: Dict[str, Any],
+    init_time: str,
+    wait: bool,
+    poll_seconds: int,
+    entry: Dict[str, Any],
+) -> bool:
+    """Handle a pending init recorded in the manifest without duplicate qsub."""
+    jobid = str(entry.get("init_jobid") or "")
+    if not jobid or not pbs_job_exists(jobid):
+        return False
+
+    _record(entry, "init_running", init_jobid=jobid)
+    print(f"Init já está ativo no PBS para {init_time}: {jobid}")
+    if not wait:
+        return True
+
+    wait_for_pbs_job(jobid, poll_seconds=poll_seconds)
+    validate_init(config, init_time, jobid=jobid)
+    _record(entry, "init_complete", init_file=str(init_file(config, init_time)))
+    return True
+
+
+def _resume_active_forecast(
+    config: Dict[str, Any],
+    init_time: str,
+    lead_hours: int,
+    dt: int,
+    wait: bool,
+    poll_seconds: int,
+    entry: Dict[str, Any],
+) -> bool:
+    """Handle a pending forecast recorded in the manifest without duplicate qsub."""
+    jobid = str(entry.get("forecast_jobid") or "")
+    if not jobid or not pbs_job_exists(jobid):
+        return False
+
+    _record(entry, "forecast_running", forecast_jobid=jobid)
+    print(f"Forecast f{lead_hours:03d} já está ativo no PBS para {init_time}: {jobid}")
+    if not wait:
+        return True
+
+    wait_for_pbs_job(jobid, poll_seconds=poll_seconds)
+    error = forecast_validation_error(config, init_time, lead_hours, dt)
+    if error is not None:
+        raise SystemExit(
+            f"ERRO: forecast f{lead_hours:03d} saiu do PBS, mas {error}."
+        )
+    _record(
+        entry,
+        "forecast_complete",
+        restart=str(restart_file(config, init_time, lead_hours, dt)),
+        da_state=str(bflow_file(config, init_time, lead_hours, dt)),
+    )
+    return True
+
+
 def run_one_cycle(
     config: Dict[str, Any],
     init_time: str,
@@ -175,10 +231,17 @@ def run_one_cycle(
     """Advance one analysis time and return ``True`` only when fNNN is valid.
 
     When ``submit`` is used without ``wait``, only the first missing stage is
-    submitted and this function returns ``False``.  Re-running the same command
-    resumes from the file validation checks rather than repeating completed work.
+    submitted and this function returns ``False``. A later invocation checks the
+    recorded PBS job IDs before preparing or submitting anything again.
     """
     init_error = init_validation_error(config, init_time)
+    if init_error is not None and _resume_active_init(
+        config, init_time, wait, poll_seconds, entry
+    ):
+        if not wait:
+            return False
+        init_error = init_validation_error(config, init_time)
+
     if init_error is None:
         validate_init(config, init_time)
         _record(entry, "init_complete", init_file=str(init_file(config, init_time)))
@@ -203,6 +266,13 @@ def run_one_cycle(
         _record(entry, "init_complete", init_file=str(init_file(config, init_time)))
 
     forecast_error = forecast_validation_error(config, init_time, lead_hours, dt)
+    if forecast_error is not None and _resume_active_forecast(
+        config, init_time, lead_hours, dt, wait, poll_seconds, entry
+    ):
+        if not wait:
+            return False
+        forecast_error = forecast_validation_error(config, init_time, lead_hours, dt)
+
     if forecast_error is None and not force_forecast:
         _record(
             entry,
