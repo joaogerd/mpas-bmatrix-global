@@ -1,1 +1,18 @@
-context: {}
+context:
+  da_state_filename: "mpasout.$Y-$M-$D_$h.$m.$s.nc"
+
+stages:
+  forecast:
+    streams:
+      streams:
+        da_state:
+          tag: stream
+          attributes:
+            type: output
+            precision: single
+            io_type: pnetcdf,cdf5
+            packages: jedi_da
+            filename_template: "{da_state_filename}"
+            filename_interval: output_interval
+            output_interval: "{output_interval}"
+            clobber_mode: overwrite
