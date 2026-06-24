@@ -24,8 +24,8 @@
 # !REVISION HISTORY:
 #   24 Jun 2026 - Documentation added for the portable WPS installation API.
 # !SEE ALSO:
-#   10_download_wps_assets.sh, 11_probe_wps_build_environment.sh and
-#   12_build_wps_ungrib.sh.
+#   1_download_wps_assets.sh, 2_probe_wps_build_environment.sh and
+#   3_build_wps_ungrib.sh.
 #EOP
 # Shared helpers for the portable WPS scripts.
 #
