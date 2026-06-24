@@ -1,19 +1,26 @@
-from mpas_workflow.wps import REQUIRED_WPS_FIELDS, missing_wps_fields
+from mpas_workflow.wps import missing_surface_inventory_levels
 
 
-def test_missing_wps_fields_reports_absent_labels(tmp_path):
-    artifact = tmp_path / "FILE:2026-06-18_00"
-    artifact.write_bytes(b"PSFC\x00PMSL\x00LANDSEA\x00")
-
-    assert missing_wps_fields(artifact) == [
-        "LANDN",
-        "SOILHGT",
-        "SKINTEMP",
-    ]
+INCOMPLETE_INVENTORY = """
+PRES   TT        UU        VV        RH        HGT       PSFC      PMSL      SM000010  ST000010  SEAICE    LANDSEA   LANDN
+-------------------------------------------------------------------------------
+ 850.0  X        X        X        X        X
+ 800.0  X        X        X        X        X
+"""
 
 
-def test_missing_wps_fields_accepts_complete_minimum_contract(tmp_path):
-    artifact = tmp_path / "FILE:2026-06-18_00"
-    artifact.write_bytes(b"\x00".join(field.encode("ascii") for field in REQUIRED_WPS_FIELDS))
+COMPLETE_INVENTORY = """
+PRES   TT        UU        VV        RH        HGT       PSFC      PMSL      SM000010  ST000010  SEAICE    LANDSEA   LANDN
+-------------------------------------------------------------------------------
+2013.0  O        O        O        O        O        O        X        O        O        O        O        O        O
+2001.0  X        X        X        X        O        X        O        X        X        X        O        X        X
+ 850.0  X        X        X        X        X
+"""
 
-    assert missing_wps_fields(artifact) == []
+
+def test_missing_surface_inventory_levels_rejects_pressure_only_inventory():
+    assert missing_surface_inventory_levels(INCOMPLETE_INVENTORY) == ["2013.0", "2001.0"]
+
+
+def test_missing_surface_inventory_levels_accepts_gfs_surface_inventory():
+    assert missing_surface_inventory_levels(COMPLETE_INVENTORY) == []
