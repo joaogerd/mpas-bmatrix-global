@@ -1,4 +1,32 @@
 #!/usr/bin/env bash
+#BOP
+# !ROUTINE: _common.sh
+# !DESCRIPTION:
+#   Defines the shared helpers and portable directory layout used by the WPS
+#   installation scripts. This file is a library: it must be sourced, not run
+#   directly. It derives paths from the repository checkout and provides
+#   deterministic helper functions for boolean parsing, prerequisite checks and
+#   GRIB2 dependency discovery.
+# !INTERFACE:
+#   source scripts/wps/_common.sh
+# !ARGUMENTS:
+#   No positional arguments are consumed. The optional environment variables
+#   REPO_ROOT, DATA_ROOT, EXTERNAL_ROOT, DOWNLOAD_ROOT, LOG_ROOT, WPS_VERSION,
+#   WPS_SRC_DIR, WPS_DEP_SEARCH_ROOTS, STACK_ROOT, SPACK_ROOT and
+#   SPACK_INSTALL_ROOT customize the resolved layout and dependency search.
+# !OUTPUTS:
+#   Exports REPO_ROOT, DATA_ROOT, EXTERNAL_ROOT, DOWNLOAD_ROOT, LOG_ROOT,
+#   WPS_VERSION and WPS_SRC_DIR. It also exposes the WPS_SEARCH_ROOTS array
+#   after wps_collect_search_roots is called.
+# !NOTES:
+#   The source guard makes repeated sourcing safe. The file intentionally does
+#   not change shell options because the calling script owns that policy.
+# !REVISION HISTORY:
+#   24 Jun 2026 - Documentation added for the portable WPS installation API.
+# !SEE ALSO:
+#   10_download_wps_assets.sh, 11_probe_wps_build_environment.sh and
+#   12_build_wps_ungrib.sh.
+#EOP
 # Shared helpers for the portable WPS scripts.
 #
 # This file is intentionally sourced by the numbered scripts. It does not alter
