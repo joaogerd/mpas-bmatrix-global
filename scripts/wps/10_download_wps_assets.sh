@@ -1,4 +1,32 @@
 #!/usr/bin/env bash
+#BOP
+# !ROUTINE: 10_download_wps_assets.sh
+# !DESCRIPTION:
+#   Downloads and validates the WPS source archive and the selected WPS
+#   geographical static-data package, then extracts them into the portable
+#   installation layout. Existing valid archives and extracted content are
+#   preserved by default, making normal re-execution safe.
+# !INTERFACE:
+#   bash scripts/wps/10_download_wps_assets.sh
+# !ARGUMENTS:
+#   No positional arguments are accepted. WPS_GEOG_PACKAGE selects the
+#   geographical dataset (low or high). DATA_ROOT, EXTERNAL_ROOT,
+#   DOWNLOAD_ROOT, WPS_SRC_DIR and WPS_VERSION customize paths and version.
+#   FORCE_WPS_SOURCE_REFRESH=true or FORCE_WPS_GEOG_REFRESH=true explicitly
+#   permit replacement of the respective extracted directories.
+# !OUTPUTS:
+#   Stores validated archives under DOWNLOAD_ROOT, extracts the WPS source at
+#   WPS_SRC_DIR, extracts static geographical data below EXTERNAL_ROOT/WPS_GEOG
+#   and writes .mpas-bmatrix-global-wps-assets.env in WPS_SRC_DIR.
+# !NOTES:
+#   curl is preferred and wget is used as a fallback. The script rejects an
+#   invalid archive before it can replace a valid download. Refresh flags are
+#   intentionally required before destructive replacement is performed.
+# !REVISION HISTORY:
+#   24 Jun 2026 - Documentation added for the portable WPS asset stage.
+# !SEE ALSO:
+#   _common.sh, 11_probe_wps_build_environment.sh and 12_build_wps_ungrib.sh.
+#EOP
 set -euo pipefail
 
 # Download WPS source and the optional WPS geographical static-data package.
