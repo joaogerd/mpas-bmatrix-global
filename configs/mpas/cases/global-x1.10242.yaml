@@ -1,18 +1,50 @@
+# =============================================================================
+# Caso MPAS: global x1.10242 (~240 km)
+# =============================================================================
+#
+# Propósito
+# ---------
+# Este é o arquivo que um usuário normalmente copia para criar uma nova malha
+# ou um novo experimento MPAS global. Ele contém somente escolhas que variam
+# entre casos; o contrato detalhado de static, init e forecast permanece em
+# configs/mpas/default/.
+#
+# Como usar
+# ---------
+# O renderer recebe este arquivo com, por exemplo:
+#   bash scripts/mpas-render --case configs/mpas/cases/global-x1.10242.yaml ...
+#
+# Ordem dos includes
+# ------------------
+# Arquivos incluídos primeiro definem defaults; este arquivo pode sobrescrevê-
+# los no bloco context. Não reordene os defaults sem compreender o deep merge.
+# =============================================================================
+
 includes:
+  # Infraestrutura e caminhos específicos do ambiente JACI.
   - ../../sites/jaci.yaml
+  # Convenções derivadas de nomes, caminhos e produtos intermediários.
   - ../default/common.yaml
+  # Contratos MPAS para os três estágios do fluxo real-data.
   - ../default/static.yaml
   - ../default/init.yaml
   - ../default/forecast.yaml
 
 case:
+  # Identificador usado em manifestos e no diretório render_root.
   name: global-x1.10242
+  # Texto descritivo; não é lido pelo executável MPAS.
   description: Global quasi-uniform MPAS-Atmosphere case at approximately 240 km
 
-# Values a user normally changes when creating another MPAS case.
+# Valores que normalmente podem mudar de um caso para outro.
 context:
+  # Nome-base da malha e prefixo dos produtos NetCDF e do grafo.
   mesh_name: x1.10242
+  # Resolução nominal usada para localizar a malha no catálogo.
   mesh_resolution_km: 240
+  # Número de ranks MPI. Deve possuir partição correspondente no catálogo.
   nproc: 128
+  # Número de níveis verticais usado no static e init.
   nvertlevels: 55
+  # Frequência padrão para restart e produtos associados do forecast.
   output_interval: "06:00:00"
