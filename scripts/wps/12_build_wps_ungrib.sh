@@ -1,4 +1,23 @@
 #!/usr/bin/env bash
+#BOP
+# !ROUTINE: 12_build_wps_ungrib.sh
+# !DESCRIPTION:
+#   Configures and builds WPS/ungrib.exe using the portable installation layout.
+#   It prepares a local NetCDF compatibility prefix with symbolic links, resolves
+#   the GRIB2 dependencies, updates configure.wps and records build provenance.
+# !INTERFACE:
+#   bash scripts/wps/12_build_wps_ungrib.sh
+# !ARGUMENTS:
+#   WPS_CONFIGURE_OPTION selects the numeric WPS configure option; FORCE_WPS_REBUILD
+#   forces a clean build. NETCDF_COMPAT_DIR, WPS_LOG_DIR and the common layout and
+#   GRIB2 dependency variables may override automatic defaults.
+# !OUTPUTS:
+#   WPS_SRC_DIR/ungrib.exe, build logs, NetCDF compatibility links and provenance files.
+# !NOTES:
+#   Existing valid executables are preserved unless FORCE_WPS_REBUILD=true.
+# !SEE ALSO:
+#   _common.sh, 10_download_wps_assets.sh and 11_probe_wps_build_environment.sh.
+#EOP
 set -euo pipefail
 
 # Build only WPS/ungrib.exe in a portable and repeatable way.
