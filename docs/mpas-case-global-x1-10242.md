@@ -1,37 +1,42 @@
 # Caso MPAS global x1.10242
 
-A configuração pública do MPAS foi reduzida a três pontos de entrada:
+A configuração MPAS combina três níveis, todos em YAML e todos acessíveis no
+repositório:
 
 ```text
 configs/
   sites/
     jaci.yaml
   mpas/
+    default/
+      common.yaml
+      static.yaml
+      init.yaml
+      forecast.yaml
     cases/
       global-x1.10242.yaml
     overlays/
       monan-jedi.yaml
 ```
 
-`configs/sites/jaci.yaml` descreve somente a infraestrutura local: caminhos de
-instalação do MPAS, catálogo de malhas e dados geográficos WPS.
+## Responsabilidades
 
-`configs/mpas/cases/global-x1.10242.yaml` é o único arquivo necessário para
-descrever a malha e os estágios MPAS do caso:
+- `configs/sites/jaci.yaml`: infraestrutura local, instalação MPAS, catálogo de
+  malhas e WPS_GEOG;
+- `configs/mpas/default/*.yaml`: contrato MPAS estável e auditável usado pelo
+  renderer. Cada arquivo representa uma parte importante do fluxo:
+  convenções comuns, geração de `static.nc`, geração de `init.nc` e forecast;
+- `configs/mpas/cases/global-x1.10242.yaml`: escolhas que normalmente variam
+  entre casos: malha, resolução, processos, níveis verticais e intervalo de
+  saída;
+- `configs/mpas/overlays/monan-jedi.yaml`: extensão opcional que reativa
+  `da_state` para MONAN-JEDI.
 
-```text
-static   -> grid.nc produz static.nc
-init     -> static.nc e FILE:* produzem init.nc
-forecast -> static.nc e init.nc preparam a integração MPAS
-```
-
-`configs/mpas/overlays/monan-jedi.yaml` é opcional. Ele adiciona o stream
-`da_state` quando um experimento precisa de produtos para MONAN-JEDI; o caso
-MPAS base não depende de JEDI.
+O caso x1.10242 inclui os defaults, mas não replica grupos de namelist ou
+streams XML. Isso mantém os detalhes MPAS visíveis e versionados, sem obrigar o
+usuário a editá-los em cada experimento.
 
 ## Renderização
-
-No JACI:
 
 ```bash
 source scripts/load_jaci_env.sh
@@ -62,32 +67,25 @@ bash scripts/mpas-render \
   --dry-run
 ```
 
-A renderização gera os mesmos `namelist.*` e `streams.*` que o MPAS usa
-normalmente, mais um manifesto JSON com contexto, templates e hashes. Ela não
-executa WPS, não prepara links de runtime e não submete PBS.
+A renderização gera os `namelist.*` e `streams.*` usados diretamente pelo MPAS,
+além de um manifesto JSON com contexto, templates e hashes. Ela não executa
+WPS, não prepara links de runtime e não submete PBS.
 
-## Uso de overlay JEDI
+## Alterações avançadas
 
-Um experimento que precise de JEDI pode criar um arquivo mínimo próprio:
-
-```yaml
-includes:
-  - /caminho/para/configs/mpas/cases/global-x1.10242.yaml
-  - /caminho/para/configs/mpas/overlays/monan-jedi.yaml
-
-case:
-  name: global-x1.10242-monan-jedi
-```
-
-Assim, a configuração básica não fica mais complexa por causa de uma extensão
-opcional.
+A maioria dos usuários deve criar ou editar somente um arquivo em `cases/`.
+Quando uma mudança for estrutural ou específica de versão MPAS — por exemplo,
+um novo grupo de namelist, um stream obrigatório ou uma alteração do fluxo
+`static -> init -> forecast` — ela deve ser feita no default do estágio
+correspondente. Isso torna a mudança explícita, revisável e reutilizável por
+todas as malhas.
 
 ## Convenções validadas
 
 - `config_nvertlevels` fica em `&dimensions`;
 - estágios estático e de inicialização ficam em `&preproc_stages`;
 - decomposição fica em `&decomposition`;
-- `static` usa o WPS_GEOG local do JACI, não o caminho `/glade` do template;
+- `static` usa WPS_GEOG local do JACI, não o caminho `/glade` do template;
 - `forecast` usa opções modernas `config_epssm_*`;
 - streams dependentes de malha usam nomes `x1.10242`, sem resíduos de
   `x1.40962`;
