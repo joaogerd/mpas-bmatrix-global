@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Shared source patches required by the WPS build.
 #
-# This file is sourced by scripts/wps/12_build_wps_ungrib.sh and may also be
-# used by standalone patch entry points. It does not set shell options.
+# This file is sourced internally by scripts/wps/3_build_wps_ungrib.sh. It does
+# not expose a standalone installation step and does not set shell options.
 
 if [[ -n "${_MPAS_BMATRIX_WPS_PATCHES_LOADED:-}" ]]; then
   return 0 2>/dev/null || exit 0
