@@ -8,6 +8,7 @@ context:
   project_root: "/p/projetos/monan_das/$USER"
   work_root: "{project_root}/work/mpas"
   mesh_catalog_root: "{project_root}/projects/mpas_meshes/quasi_uniform"
+  wps_geog_data_path: "{project_root}/data/mpas-bmatrix-global/external/WPS_GEOG/low_res_mandatory/WPS_GEOG_LOW_RES"
   mpas_install_root: "{project_root}/builds/monan-jedi-mpas"
   init_share: "{mpas_install_root}/share/MPAS/core_init_atmosphere"
   atmosphere_share: "{mpas_install_root}/share/MPAS/core_atmosphere"
