@@ -103,11 +103,11 @@ O primeiro e o segundo comandos substituem, respectivamente, o código-fonte WPS
 
 ## Resultado esperado
 
-Ao fim da compilação, verifique:
+Ao fim da compilação, recalcule o caminho portátil e verifique o executável:
 
 ```bash
-WPS_ROOT="${WPS_SRC_DIR:-${DATA_ROOT:-$(pwd)/data}/external/WPS/WPS-4.6.0}"
-ls -lh "$WPS_ROOT/ungrib.exe"
+source scripts/wps/_common.sh
+ls -lh "$WPS_SRC_DIR/ungrib.exe"
 ```
 
 O caminho definitivo sempre é mostrado pelos scripts como `WPS_SRC_DIR`. Use esse mesmo valor ao preencher os campos `wps.root`, `wps.ungrib_exe`, `wps.link_grib` e `wps.vtable_gfs` na configuração específica do seu workflow.
