@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from mpas_workflow.case_config import load_case_config, resolve_context
+from mpas_workflow.case_render import _time_context
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,7 +24,10 @@ def test_static_stage_uses_preproc_dimensions_and_decomposition_groups():
     assert "config_nvertlevels" not in groups["nhyd_model"]
     assert "config_static_interp" not in groups["nhyd_model"]
 
-    context = resolve_context(case)
+    context = resolve_context(
+        case,
+        _time_context("2026-06-12_00:00:00", lead_hours=6, dt=1200),
+    )
     assert "/glade/" not in context["wps_geog_data_path"]
     assert context["wps_geog_data_path"].endswith("WPS_GEOG_LOW_RES")
 
