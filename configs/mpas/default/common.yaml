@@ -1,20 +1,56 @@
+# =============================================================================
+# MPAS defaults: convenções comuns
+# =============================================================================
+#
+# Propósito
+# ---------
+# Reúne convenções reutilizáveis por qualquer caso MPAS atmosférico global:
+# localização esperada de malha, nomes de arquivos produzidos e diretórios de
+# renderização. Este arquivo não fixa uma malha; usa valores fornecidos pelo
+# arquivo em configs/mpas/cases/.
+#
+# Quem altera este arquivo?
+# -------------------------
+# Mantenedores do contrato MPAS. Altere somente quando uma convenção comum
+# precisar mudar para todos os casos. Para escolher malha, nproc ou níveis,
+# edite o arquivo do caso.
+# =============================================================================
+
+# Identifica o formato do caso MPAS e sua família de modelos.
 schema: mpas-case/v1
 
 case:
+  # A família orienta documentação e futuras validações, sem escolher uma malha.
   family: mpas-atmosphere-global
 
+# Valores derivados usados pelos defaults de static, init e forecast.
 context:
+  # Área de trabalho deste projeto dentro do workspace definido pelo site.
   work_root: "{workspace_root}/mpas-bmatrix-global"
+
+  # Diretório da malha, derivado de mesh_name e mesh_resolution_km do caso.
   mesh_root: "{mesh_catalog_root}/{mesh_name}_{mesh_resolution_km}km"
+  # Arquivo NetCDF com a geometria e conectividade da malha.
   grid_path: "{mesh_root}/mesh/{mesh_name}.grid.nc"
+  # Nome local esperado pelo template MPAS de inicialização.
   grid_local_name: "{mesh_name}.grid.nc"
+
+  # Grafo de decomposição e prefixo usado pelo namelist MPAS.
   graph_path: "{mesh_root}/graph/{mesh_name}.graph.info"
   graph_basename: "{mesh_name}.graph.info"
+  # Partição específica do número de processos selecionado no caso.
   partition_path: "{mesh_root}/partitions/{graph_basename}.part.{nproc}"
+
+  # Produtos intermediários padronizados do fluxo static -> init -> forecast.
   static_output_name: "{mesh_name}.static.nc"
   init_output_name: "{mesh_name}.init.{safe_time}.nc"
   surface_update_output_name: "{mesh_name}.sfc_update.nc"
   ugwp_oro_output_name: "{mesh_name}.ugwp_oro_data.nc"
+
+  # Convenções de saída do forecast. $Y, $M, $D, $h, $m e $s são interpretados
+  # pelo MPAS, não pelo renderer YAML.
   restart_filename: "restart.$Y-$M-$D_$h.$m.$s.nc"
   output_interval: "06:00:00"
+
+  # Diretório que recebe apenas namelist, streams e manifesto renderizados.
   render_root: "{work_root}/mpas-rendered/{case_name}"
