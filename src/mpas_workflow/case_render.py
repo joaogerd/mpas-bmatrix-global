@@ -326,8 +326,13 @@ def _time_context(init_time: str | None, lead_hours: int | None, dt: int | None)
         if lead_hours is not None:
             context["valid_time"] = (instant + timedelta(hours=lead_hours)).strftime(TIME_FORMAT)
     if lead_hours is not None:
+        if lead_hours < 0:
+            raise RenderError("--lead-hours não pode ser negativo.")
         context["lead_hours"] = lead_hours
+        context["run_duration"] = f"{lead_hours // 24}_{lead_hours % 24:02d}:00:00"
     if dt is not None:
+        if dt <= 0:
+            raise RenderError("--dt deve ser positivo.")
         context["dt"] = dt
     return context
 
