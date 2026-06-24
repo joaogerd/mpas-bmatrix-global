@@ -1,29 +1,82 @@
 #!/usr/bin/env bash
-# Shared source patches required by the WPS build.
 #
-# This file is sourced internally by scripts/wps/3_build_wps_ungrib.sh. It does
-# not expose a standalone installation step and does not set shell options.
+# Nome: _patches.sh
+# Descrição: Biblioteca interna de correções de código-fonte necessárias à
+#   compilação do WPS/ungrib.
+#
+# Finalidade no workflow:
+#   Aplica, de forma controlada, a correção de compatibilidade JasPer exigida
+#   pelo WPS 4.6.0 antes da compilação de ungrib.exe. É carregada exclusivamente
+#   por 3_build_wps_ungrib.sh.
+#
+# Uso:
+#   source scripts/wps/_patches.sh
+#   wps_apply_dec_jpeg2000_patch
+#
+# Pré-requisitos:
+#   - _common.sh já carregado e WPS_SRC_DIR definido;
+#   - Python 3 no PATH;
+#   - árvore WPS válida contendo ungrib/src/ngl/g2/dec_jpeg2000.c.
+#
+# Variáveis de ambiente relevantes:
+#   WPS_SRC_DIR. Após a execução da função, a variável
+#   WPS_DEC_JPEG2000_PATCH_CHANGED indica se a fonte foi modificada nesta
+#   invocação.
+#
+# Arquivos criados ou modificados:
+#   - $WPS_SRC_DIR/ungrib/src/ngl/g2/dec_jpeg2000.c;
+#   - $WPS_SRC_DIR/ungrib/src/ngl/g2/dec_jpeg2000.c.orig-jpc-decode
+#     (backup, criado uma única vez);
+#   - $WPS_SRC_DIR/.mpas-bmatrix-global-wps-patches.env.
+#
+# Idempotência:
+#   A correção só é aplicada quando a chamada obsoleta jpc_decode() aparece
+#   exatamente uma vez. Uma fonte já corrigida é reutilizada. Estados ambíguos
+#   interrompem a execução para evitar alteração indevida.
+#
+# Autor: João Gerd Zell de Mattos
+# Projeto: mpas-bmatrix-global
+# Última atualização: 2026-06-24
+#
 
+# Esta é uma biblioteca interna. A execução direta não prepara o ambiente do
+# processo chamador nem representa uma etapa pública do workflow.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  printf '%s\n' "ERRO: ${BASH_SOURCE[0]} é uma biblioteca; execute 3_build_wps_ungrib.sh." >&2
+  exit 2
+fi
+
+# Evita redefinições e reaplicações acidentais quando o arquivo é carregado
+# repetidamente durante a mesma sessão Bash.
 if [[ -n "${_MPAS_BMATRIX_WPS_PATCHES_LOADED:-}" ]]; then
-  return 0 2>/dev/null || exit 0
+  return 0
 fi
 _MPAS_BMATRIX_WPS_PATCHES_LOADED=1
 
-# Apply the WPS 4.6.0 dec_jpeg2000.c compatibility patch for JasPer.
+# Aplica a correção de compatibilidade com JasPer em dec_jpeg2000.c.
 #
-# WPS calls the obsolete/internal jpc_decode() symbol. Modern JasPer builds do
-# not export it. The public API is jas_image_decode(). The function is
-# idempotent and sets WPS_DEC_JPEG2000_PATCH_CHANGED=true only when it changed
-# the source file in this invocation.
+# Entradas:
+#   - WPS_SRC_DIR: raiz da árvore WPS.
+# Saídas:
+#   - WPS_DEC_JPEG2000_PATCH_CHANGED=true quando a fonte foi alterada;
+#   - WPS_DEC_JPEG2000_PATCH_CHANGED=false quando a correção já estava presente.
+# Arquivos afetados:
+#   - alvo da correção, backup original e arquivo de proveniência descritos no
+#     cabeçalho.
+# Dependências externas:
+#   - python3 para validar o estado e fazer a substituição inequívoca.
+# Falhas:
+#   - retorna erro se o alvo não existir ou o estado da fonte for inesperado.
 wps_apply_dec_jpeg2000_patch() {
   local target backup state
+
   target="${WPS_SRC_DIR}/ungrib/src/ngl/g2/dec_jpeg2000.c"
   backup="${target}.orig-jpc-decode"
   WPS_DEC_JPEG2000_PATCH_CHANGED=false
   export WPS_DEC_JPEG2000_PATCH_CHANGED
 
   if [[ ! -f "${target}" ]]; then
-    echo "ERRO: arquivo alvo do patch não encontrado: ${target}" >&2
+    printf '%s\n' "ERRO: arquivo alvo do patch não encontrado: ${target}" >&2
     return 1
   fi
 
@@ -58,14 +111,14 @@ PY
 
   case "${state}" in
     already-applied)
-      echo "Patch JasPer já aplicado: ${target}"
+      printf '%s\n' "Patch JasPer já aplicado: ${target}"
       ;;
     needs-patch)
       if [[ ! -e "${backup}" ]]; then
         cp -p "${target}" "${backup}"
-        echo "Backup original criado: ${backup}"
+        printf '%s\n' "Backup original criado: ${backup}"
       else
-        echo "Backup original já existente: ${backup}"
+        printf '%s\n' "Backup original já existente: ${backup}"
       fi
 
       python3 - "${target}" <<'PY'
@@ -87,10 +140,10 @@ PY
 
       WPS_DEC_JPEG2000_PATCH_CHANGED=true
       export WPS_DEC_JPEG2000_PATCH_CHANGED
-      echo "Patch JasPer aplicado: ${target}"
+      printf '%s\n' "Patch JasPer aplicado: ${target}"
       ;;
     *)
-      echo "ERRO: resposta inesperada ao verificar patch JasPer: ${state}" >&2
+      printf '%s\n' "ERRO: resposta inesperada ao verificar patch JasPer: ${state}" >&2
       return 1
       ;;
   esac
