@@ -2,19 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import re
+import subprocess
 
 from .config import date_part, cycle_part, ymdh
 from .shell import require_file, run, symlink_force, write_text
 
 
-REQUIRED_WPS_FIELDS = (
-    "LANDSEA",
-    "LANDN",
-    "SOILHGT",
-    "SKINTEMP",
-    "PSFC",
-    "PMSL",
-)
+REQUIRED_SURFACE_LEVELS = ("2013.0", "2001.0")
 
 
 def grib_path(config, init_time, fhour="000"):
@@ -65,6 +60,7 @@ def _clean_ungrib_run_dir(run_dir: Path):
         "namelist.wps",
         "ungrib.exe",
         "link_grib.csh",
+        "ungrib.stdout.log",
     ]
     for pattern in patterns:
         for path in run_dir.glob(pattern):
@@ -87,6 +83,52 @@ def _download_gfs(grib: Path, gfs_date: str, gfs_cycle: str, fhour: str) -> None
     temporary.replace(grib)
 
 
+def _run_ungrib_logged(run_dir: Path) -> str:
+    cmd = ["./ungrib.exe"]
+    print("+", " ".join(cmd), flush=True)
+    proc = subprocess.run(
+        cmd,
+        cwd=run_dir,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    output = proc.stdout or ""
+    print(output, end="", flush=True)
+    write_text(run_dir / "ungrib.stdout.log", output)
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, cmd, output=output)
+    return output
+
+
+def missing_surface_inventory_levels(ungrib_output: str) -> list[str]:
+    """Return required GFS surface inventory levels absent from ungrib stdout.
+
+    GFS 0.25 analyses accepted by the legacy MPAS-init path include the 2013.0
+    and 2001.0 surface inventory rows. Their absence means the GRIB cache lacks
+    the surface/land records needed by MPAS init (for example LANDSEA).
+    """
+    present = {
+        match.group(1)
+        for line in ungrib_output.splitlines()
+        if (match := re.match(r"^\s*(\d+\.\d+)\s+[XO](?:\s|$)", line))
+    }
+    return [level for level in REQUIRED_SURFACE_LEVELS if level not in present]
+
+
+def _validate_surface_inventory(ungrib_output: str, inventory_log: Path) -> None:
+    missing = missing_surface_inventory_levels(ungrib_output)
+    if missing:
+        raise SystemExit(
+            "ERRO: inventário do ungrib não contém os níveis de superfície obrigatórios: "
+            f"{', '.join(missing)}\n"
+            "O GRIB GFS em cache está incompleto para o MPAS-init "
+            "(campos como LANDSEA não foram disponibilizados).\n"
+            f"Log do inventário: {inventory_log}"
+        )
+
+
 def _run_ungrib_once(wps: dict, run_dir: Path, grib: Path, init_time: str, fhour: str) -> Path:
     _clean_ungrib_run_dir(run_dir)
     symlink_force(wps["vtable_gfs"], run_dir / "Vtable")
@@ -95,28 +137,12 @@ def _run_ungrib_once(wps: dict, run_dir: Path, grib: Path, init_time: str, fhour
     _write_namelist_wps(run_dir / "namelist.wps", init_time, fhour)
 
     run(["./link_grib.csh", str(grib)], cwd=run_dir)
-    run(["./ungrib.exe"], cwd=run_dir)
+    output = _run_ungrib_logged(run_dir)
+    _validate_surface_inventory(output, run_dir / "ungrib.stdout.log")
 
     expected = run_dir / f"FILE:{init_time[:13]}"
     require_file(expected, "WPS FILE")
     return expected
-
-
-def missing_wps_fields(path: Path, required_fields=REQUIRED_WPS_FIELDS) -> list[str]:
-    """Return required WPS field labels absent from one intermediate FILE:* artifact."""
-    payload = Path(path).read_bytes()
-    return [field for field in required_fields if field.encode("ascii") not in payload]
-
-
-def _validate_wps_fields(path: Path) -> None:
-    missing = missing_wps_fields(path)
-    if missing:
-        names = ", ".join(missing)
-        raise SystemExit(
-            f"ERRO: WPS FILE incompleto: {path}\n"
-            f"Campos obrigatórios ausentes: {names}\n"
-            "O GRIB GFS em cache pode estar incompleto; o MPAS-init não será submetido."
-        )
 
 
 def _quarantine_invalid_grib(grib: Path) -> Path:
@@ -144,10 +170,8 @@ def run_ungrib(config, init_time, fhour="000", download=True):
         _download_gfs(grib, gfs_date, gfs_cycle, fhour)
 
     require_file(grib, "GFS GRIB2")
-    expected = _run_ungrib_once(wps, run_dir, grib, init_time, fhour)
-
     try:
-        _validate_wps_fields(expected)
+        expected = _run_ungrib_once(wps, run_dir, grib, init_time, fhour)
     except SystemExit:
         if not (download and cached_grib):
             raise
@@ -156,7 +180,6 @@ def run_ungrib(config, init_time, fhour="000", download=True):
         print("Baixando novamente o GFS completo e repetindo ungrib...")
         _download_gfs(grib, gfs_date, gfs_cycle, fhour)
         expected = _run_ungrib_once(wps, run_dir, grib, init_time, fhour)
-        _validate_wps_fields(expected)
 
     print(f"OK: ungrib gerou {expected}")
     return expected
