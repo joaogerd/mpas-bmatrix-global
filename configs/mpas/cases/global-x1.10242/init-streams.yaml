@@ -1,0 +1,22 @@
+stages:
+  init:
+    streams:
+      template: "{init_share}/streams.init_atmosphere"
+      output: streams.init_atmosphere
+      streams:
+        input:
+          attributes:
+            type: input
+            input_interval: initial_only
+            filename_template: "{static_output_name}"
+        output:
+          attributes:
+            type: output
+            filename_template: "{init_output_name}"
+            clobber_mode: overwrite
+        ugwp_oro_data:
+          attributes:
+            filename_template: "{ugwp_oro_output_name}"
+        surface:
+          attributes:
+            filename_template: "{surface_update_output_name}"
