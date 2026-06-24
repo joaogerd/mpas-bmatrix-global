@@ -6,8 +6,9 @@ context:
   case_dir: "{repo_root}/configs/mpas/cases/global-x1.10242"
   init_time: "2026-06-12_00:00:00"
   safe_time: "2026-06-12_00.00.00"
-  lead_hours: "6"
-  dt: "1200"
+  lead_hours: 6
+  dt: 1200
+  nproc: 128
   render_root: "/p/projetos/monan_das/$USER/work/mpas-rendered/global-x1.10242"
 
 # This workflow renders only MPAS configuration artifacts. A later workflow
@@ -86,6 +87,6 @@ tasks:
         - "{repo_root}/configs/mpas/cases/global-x1.10242/case.yaml"
     outputs:
       required:
-        - "{render_root}/forecast/{safe_time}/f006_dt1200_np128/namelist.atmosphere"
-        - "{render_root}/forecast/{safe_time}/f006_dt1200_np128/streams.atmosphere"
-        - "{render_root}/forecast/{safe_time}/f006_dt1200_np128/mpas-render-manifest.json"
+        - "{render_root}/forecast/{safe_time}/f{lead_hours:03d}_dt{dt}_np{nproc}/namelist.atmosphere"
+        - "{render_root}/forecast/{safe_time}/f{lead_hours:03d}_dt{dt}_np{nproc}/streams.atmosphere"
+        - "{render_root}/forecast/{safe_time}/f{lead_hours:03d}_dt{dt}_np{nproc}/mpas-render-manifest.json"
