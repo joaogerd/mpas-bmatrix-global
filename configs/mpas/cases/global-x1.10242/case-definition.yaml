@@ -1,3 +1,0 @@
-includes:
-  - case-core.yaml
-  - case-forecast-streams.yaml
