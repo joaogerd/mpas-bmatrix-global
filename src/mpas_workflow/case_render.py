@@ -345,7 +345,10 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--case", required=True, help="Diretório do caso ou arquivo case.yaml")
     value.add_argument("--stage", required=True, help="Estágio declarado em stages.<nome>")
     value.add_argument("--output-dir", help="Sobrescreve stages.<nome>.output_dir")
-    value.add_argument("--init-time", help=f"Data inicial no formato {TIME_FORMAT}")
+    value.add_argument(
+        "--init-time",
+        help=f"Data inicial no formato {TIME_FORMAT.replace('%', '%%')}",
+    )
     value.add_argument("--lead-hours", type=int)
     value.add_argument("--dt", type=int)
     value.add_argument("--set", dest="assignments", action="append", type=_parse_assignment, default=[])
@@ -378,5 +381,4 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+if __name__ == "__main__":n    raise SystemExit(main())
