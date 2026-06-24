@@ -1,68 +1,49 @@
 # Instalação portátil do WPS/ungrib
 
-Este diretório contém as etapas para preparar o `ungrib.exe` do WPS, necessário para converter dados GFS em GRIB antes da criação de condições iniciais do MPAS.
+Este diretório prepara o `ungrib.exe` do WPS, usado para converter GFS/GRIB em arquivos intermediários para a preparação das condições iniciais do MPAS.
 
-Os scripts não dependem de uma conta específica. Eles localizam a raiz do repositório a partir da própria localização e aceitam variáveis de ambiente para qualquer diretório que precise ser personalizado.
-
-## Sequência de instalação
-
-A partir da raiz do repositório:
+A interface pública possui apenas três etapas, executadas a partir da raiz do repositório:
 
 ```bash
 source scripts/load_jaci_env.sh
 
-bash scripts/wps/10_download_wps_assets.sh
-bash scripts/wps/11_probe_wps_build_environment.sh
-bash scripts/wps/12_build_wps_ungrib.sh
+bash scripts/wps/1_download_wps_assets.sh
+bash scripts/wps/2_probe_wps_build_environment.sh
+bash scripts/wps/3_build_wps_ungrib.sh
 ```
 
-O segundo passo é somente diagnóstico e não altera a árvore do WPS. Ele verifica os compiladores, NetCDF, JasPer, libpng e zlib antes da compilação.
+`2_probe_wps_build_environment.sh` é somente diagnóstico e não modifica a árvore WPS. `3_build_wps_ungrib.sh` aplica automaticamente o patch de compatibilidade com JasPer antes de configurar ou compilar: ele substitui a chamada obsoleta `jpc_decode()` por `jas_image_decode(..., jas_image_strtofmt("jpc"), ...)` em `ungrib/src/ngl/g2/dec_jpeg2000.c`.
 
-O passo 12 aplica automaticamente, antes de configurar ou compilar, o patch de compatibilidade JasPer que substitui a chamada obsoleta `jpc_decode()` por `jas_image_decode(..., jas_image_strtofmt("jpc"), ...)`. Portanto, `14_patch_wps_dec_jpeg2000.sh` **não** deve ser incluído como uma etapa manual da instalação normal.
-
-## Patch JasPer isolado
-
-O patch continua disponível para inspeção ou para uma alteração somente no código-fonte:
-
-```bash
-bash scripts/wps/14_patch_wps_dec_jpeg2000.sh
-```
-
-Ele é idempotente, cria o backup `dec_jpeg2000.c.orig-jpc-decode` antes da primeira alteração e falha quando encontra uma árvore WPS inesperada. Caso seja aplicado manualmente a uma instalação que já possuía `ungrib.exe`, rode a compilação em seguida. O `12_build_wps_ungrib.sh` também detecta que a fonte está mais nova que o executável e recompila automaticamente.
+Não há uma quarta etapa pública para esse patch: ele é uma dependência interna do build, implementada em `_patches.sh`. O build é idempotente e recompila quando a fonte corrigida for mais nova que `ungrib.exe`.
 
 ## Diretórios padrão
 
-Sem variáveis adicionais, os scripts usam uma das duas convenções abaixo:
+Os scripts localizam a raiz do checkout automaticamente. Sem variáveis adicionais, usam:
 
-- checkout comum: `<repositorio>/data`;
-- checkout em `<workspace>/projects/mpas-bmatrix-global`: `<workspace>/data/mpas-bmatrix-global`.
+- `<repositorio>/data`, para um clone em local arbitrário;
+- `<workspace>/data/mpas-bmatrix-global`, quando o checkout está em `<workspace>/projects/mpas-bmatrix-global`.
 
-Assim, no layout usual do JACI, com o clone em:
+No layout usual do JACI:
 
 ```text
 /p/projetos/monan_das/$USER/projects/mpas-bmatrix-global
 ```
 
-os arquivos são preparados em:
+os dados são instalados em:
 
 ```text
 /p/projetos/monan_das/$USER/data/mpas-bmatrix-global/external
 ```
 
-A instalação não depende de `joao.gerd` nem exige que todos os usuários adotem esse layout.
-
 ## Personalização de caminhos
-
-Defina `DATA_ROOT` quando os dados devem ficar em outro local:
 
 ```bash
 export DATA_ROOT=/caminho/para/dados/mpas-bmatrix-global
-
-bash scripts/wps/10_download_wps_assets.sh
-bash scripts/wps/12_build_wps_ungrib.sh
+bash scripts/wps/1_download_wps_assets.sh
+bash scripts/wps/3_build_wps_ungrib.sh
 ```
 
-Outras variáveis disponíveis:
+As principais sobrescritas são:
 
 ```bash
 REPO_ROOT=/caminho/para/mpas-bmatrix-global
@@ -75,52 +56,35 @@ WPS_LOG_DIR=/caminho/para/logs/wps
 
 ## Dependências GRIB2
 
-O build procura JasPer, libpng e zlib a partir dos prefixos retornados por `nc-config` e `nf-config`, além de `STACK_ROOT`, `SPACK_ROOT` e `SPACK_INSTALL_ROOT`, quando definidos.
-
-Quando as bibliotecas estiverem fora dessas raízes, informe a instalação Spack ou outro prefixo de busca:
+O build detecta JasPer, libpng e zlib a partir de `nc-config`, `nf-config`, `STACK_ROOT`, `SPACK_ROOT` e `SPACK_INSTALL_ROOT`. Caso a instalação esteja fora dessas raízes:
 
 ```bash
 export WPS_DEP_SEARCH_ROOTS=/caminho/para/spack/install
-bash scripts/wps/11_probe_wps_build_environment.sh
-bash scripts/wps/12_build_wps_ungrib.sh
+bash scripts/wps/2_probe_wps_build_environment.sh
+bash scripts/wps/3_build_wps_ungrib.sh
 ```
 
-Como alternativa, informe os seis caminhos diretamente:
-
-```bash
-JASPERINC=/caminho/include \
-JASPERLIB=/caminho/lib \
-PNG_INC=/caminho/include \
-PNG_LIB=/caminho/lib \
-ZLIB_INC=/caminho/include \
-ZLIB_LIB=/caminho/lib \
-bash scripts/wps/12_build_wps_ungrib.sh
-```
+Também é possível definir `JASPERINC`, `JASPERLIB`, `PNG_INC`, `PNG_LIB`, `ZLIB_INC` e `ZLIB_LIB` explicitamente.
 
 ## Idempotência e reexecução
 
-- `10_download_wps_assets.sh` valida os arquivos `.tar.gz`, reaproveita downloads e não extrai novamente uma árvore WPS válida ou dados geográficos já existentes.
-- `11_probe_wps_build_environment.sh` é somente leitura; pode ser executado quantas vezes forem necessárias.
-- `14_patch_wps_dec_jpeg2000.sh` aplica o patch JasPer uma única vez e preserva o backup do arquivo original.
-- `12_build_wps_ungrib.sh` aplica esse patch automaticamente. Ele reutiliza `ungrib.exe` somente quando o executável não estiver mais antigo que o arquivo-fonte corrigido; o diretório de compatibilidade NetCDF é atualizado com links simbólicos sem modificar as instalações originais de NetCDF.
+- `1_download_wps_assets.sh` reutiliza arquivos válidos e instalações já extraídas.
+- `2_probe_wps_build_environment.sh` é somente leitura.
+- `3_build_wps_ungrib.sh` reaproveita um `ungrib.exe` consistente e atualiza o prefixo NetCDF somente por links simbólicos.
 
-Para ações destrutivas explícitas, use:
+As substituições destrutivas exigem uma escolha explícita:
 
 ```bash
-FORCE_WPS_SOURCE_REFRESH=true bash scripts/wps/10_download_wps_assets.sh
-FORCE_WPS_GEOG_REFRESH=true bash scripts/wps/10_download_wps_assets.sh
-FORCE_WPS_REBUILD=true bash scripts/wps/12_build_wps_ungrib.sh
+FORCE_WPS_SOURCE_REFRESH=true bash scripts/wps/1_download_wps_assets.sh
+FORCE_WPS_GEOG_REFRESH=true bash scripts/wps/1_download_wps_assets.sh
+FORCE_WPS_REBUILD=true bash scripts/wps/3_build_wps_ungrib.sh
 ```
 
-O primeiro e o segundo comandos substituem, respectivamente, o código-fonte WPS e os dados geográficos no diretório selecionado. Use-os apenas quando essa substituição for desejada.
-
-## Resultado esperado
-
-Ao fim da compilação, recalcule o caminho portátil e verifique o executável:
+## Verificação
 
 ```bash
 source scripts/wps/_common.sh
 ls -lh "$WPS_SRC_DIR/ungrib.exe"
 ```
 
-O caminho definitivo sempre é mostrado pelos scripts como `WPS_SRC_DIR`. Use esse mesmo valor ao preencher os campos `wps.root`, `wps.ungrib_exe`, `wps.link_grib` e `wps.vtable_gfs` na configuração específica do seu workflow.
+Use o `WPS_SRC_DIR` mostrado pelos scripts nos campos `wps.root`, `wps.ungrib_exe`, `wps.link_grib` e `wps.vtable_gfs` da configuração do workflow.
