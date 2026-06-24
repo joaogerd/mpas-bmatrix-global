@@ -1,0 +1,14 @@
+schema: mpas-site/v1
+
+site:
+  name: jaci
+  scheduler: pbs
+
+context:
+  project_root: "/p/projetos/monan_das/$USER"
+  work_root: "{project_root}/work/mpas"
+  mpas_install_root: "{project_root}/builds/monan-jedi-mpas"
+  init_share: "{mpas_install_root}/share/MPAS/core_init_atmosphere"
+  atmosphere_share: "{mpas_install_root}/share/MPAS/core_atmosphere"
+  mpas_init_executable: "{mpas_install_root}/bin/mpas_init_atmosphere"
+  mpas_atmosphere_executable: "{mpas_install_root}/bin/mpas_atmosphere"
