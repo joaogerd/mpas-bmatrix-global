@@ -1,0 +1,25 @@
+stages:
+  forecast:
+    streams:
+      streams:
+        iau:
+          tag: stream
+          attributes:
+            type: "none"
+            packages: ~
+            filename_template: ~
+            filename_interval: ~
+            input_interval: ~
+            output_interval: ~
+        da_state:
+          tag: stream
+          attributes:
+            type: "none"
+            packages: ~
+            precision: ~
+            io_type: ~
+            filename_template: ~
+            filename_interval: ~
+            input_interval: ~
+            output_interval: ~
+            clobber_mode: ~
