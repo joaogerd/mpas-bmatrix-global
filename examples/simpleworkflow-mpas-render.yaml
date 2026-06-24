@@ -1,20 +1,46 @@
+# =============================================================================
+# Exemplo simpleWorkflow: renderização de configuração MPAS
+# =============================================================================
+#
+# Propósito
+# ---------
+# Demonstra como o simpleWorkflow pode orquestrar somente a geração de
+# namelist, streams e manifestos para os estágios static, init e forecast.
+# Este arquivo não executa MPAS, não cria links de runtime e não submete PBS.
+#
+# Antes de usar
+# --------------
+# Ajuste repo_root, init_time, lead_hours, dt e render_root para o experimento.
+# O caso MPAS permanece externo e é referenciado por case_file.
+# =============================================================================
+
 workflow:
+  # Nome exibido no banco de estados e nos logs do simpleWorkflow.
   name: mpas-x1-10242-render
 
+# Variáveis interpoladas nas tarefas abaixo.
 context:
+  # Clone local do repositório que contém scripts e arquivos de configuração.
   repo_root: "/p/projetos/monan_das/$USER/projects/mpas-bmatrix-global"
+  # Caso científico; defaults e configuração de site são incluídos por ele.
   case_file: "{repo_root}/configs/mpas/cases/global-x1.10242.yaml"
+  # Ciclo inicial no formato aceito pelo renderer e pelo MPAS.
   init_time: "2026-06-12_00:00:00"
+  # Representação segura para nomes de diretório, derivada de init_time.
   safe_time: "2026-06-12_00.00.00"
+  # Lead e passo de tempo usados pelo estágio forecast.
   lead_hours: 6
   dt: 1200
+  # Mantido no contexto porque faz parte do nome de saída do forecast.
   nproc: 128
+  # Destino de artefatos renderizados; pode ser sobrescrito por experimento.
   render_root: "/p/projetos/monan_das/$USER/work/mpas-bmatrix-global/mpas-rendered/global-x1.10242"
 
-# These tasks render only MPAS artifacts. Other tasks stage runtime links,
-# execute MPAS and validate NetCDF outputs.
+# As tarefas são independentes nesta etapa. A futura camada de runtime criará
+# dependências de arquivos, links, execução MPAS e validação de NetCDF.
 tasks:
   - name: render_static
+    # Executa o launcher do renderer como lista argv, sem shell implícito.
     argv:
       - bash
       - "{repo_root}/scripts/mpas-render"
@@ -26,6 +52,7 @@ tasks:
       - "{init_time}"
       - --dt
       - "{dt}"
+      # Sobrescreve apenas o destino dos artefatos, não o contrato do caso.
       - --set
       - "render_root={render_root}"
     cwd: "{repo_root}"
@@ -35,6 +62,7 @@ tasks:
         - "{case_file}"
     outputs:
       required:
+        # Namelist, streams e manifesto que documenta a renderização.
         - "{render_root}/static/namelist.init_atmosphere"
         - "{render_root}/static/streams.init_atmosphere"
         - "{render_root}/static/mpas-render-manifest.json"
@@ -60,6 +88,7 @@ tasks:
         - "{case_file}"
     outputs:
       required:
+        # O init é separado por ciclo para preservar condições iniciais antigas.
         - "{render_root}/init/{safe_time}/namelist.init_atmosphere"
         - "{render_root}/init/{safe_time}/streams.init_atmosphere"
         - "{render_root}/init/{safe_time}/mpas-render-manifest.json"
@@ -87,6 +116,7 @@ tasks:
         - "{case_file}"
     outputs:
       required:
+        # Diretório discrimina ciclo, lead, dt e nproc para evitar colisões.
         - "{render_root}/forecast/{safe_time}/f{lead_hours:03d}_dt{dt}_np{nproc}/namelist.atmosphere"
         - "{render_root}/forecast/{safe_time}/f{lead_hours:03d}_dt{dt}_np{nproc}/streams.atmosphere"
         - "{render_root}/forecast/{safe_time}/f{lead_hours:03d}_dt{dt}_np{nproc}/mpas-render-manifest.json"
