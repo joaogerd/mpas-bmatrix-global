@@ -18,6 +18,18 @@ bash scripts/wps/12_build_wps_ungrib.sh
 
 O segundo passo é somente diagnóstico e não altera a árvore do WPS. Ele verifica os compiladores, NetCDF, JasPer, libpng e zlib antes da compilação.
 
+O passo 12 aplica automaticamente, antes de configurar ou compilar, o patch de compatibilidade JasPer que substitui a chamada obsoleta `jpc_decode()` por `jas_image_decode(..., jas_image_strtofmt("jpc"), ...)`. Portanto, `14_patch_wps_dec_jpeg2000.sh` **não** deve ser incluído como uma etapa manual da instalação normal.
+
+## Patch JasPer isolado
+
+O patch continua disponível para inspeção ou para uma alteração somente no código-fonte:
+
+```bash
+bash scripts/wps/14_patch_wps_dec_jpeg2000.sh
+```
+
+Ele é idempotente, cria o backup `dec_jpeg2000.c.orig-jpc-decode` antes da primeira alteração e falha quando encontra uma árvore WPS inesperada. Caso seja aplicado manualmente a uma instalação que já possuía `ungrib.exe`, rode a compilação em seguida. O `12_build_wps_ungrib.sh` também detecta que a fonte está mais nova que o executável e recompila automaticamente.
+
 ## Diretórios padrão
 
 Sem variáveis adicionais, os scripts usam uma das duas convenções abaixo:
@@ -89,7 +101,8 @@ bash scripts/wps/12_build_wps_ungrib.sh
 
 - `10_download_wps_assets.sh` valida os arquivos `.tar.gz`, reaproveita downloads e não extrai novamente uma árvore WPS válida ou dados geográficos já existentes.
 - `11_probe_wps_build_environment.sh` é somente leitura; pode ser executado quantas vezes forem necessárias.
-- `12_build_wps_ungrib.sh` não recompila quando `ungrib.exe` já existe e é executável. O diretório de compatibilidade NetCDF é atualizado com links simbólicos sem modificar as instalações originais de NetCDF.
+- `14_patch_wps_dec_jpeg2000.sh` aplica o patch JasPer uma única vez e preserva o backup do arquivo original.
+- `12_build_wps_ungrib.sh` aplica esse patch automaticamente. Ele reutiliza `ungrib.exe` somente quando o executável não estiver mais antigo que o arquivo-fonte corrigido; o diretório de compatibilidade NetCDF é atualizado com links simbólicos sem modificar as instalações originais de NetCDF.
 
 Para ações destrutivas explícitas, use:
 
