@@ -7,4 +7,4 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 export PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
 
 PYTHON=${PYTHON:-python3}
-exec "${PYTHON}" -m mpas_workflow.case_render "$@"
+exec "${PYTHON}" -m mpas_workflow.case_render_cli "$@"
