@@ -1,0 +1,3 @@
+includes:
+  - init-namelist.yaml
+  - init-streams.yaml
