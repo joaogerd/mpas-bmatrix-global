@@ -1,0 +1,91 @@
+workflow:
+  name: mpas-x1-10242-render
+
+context:
+  repo_root: "/p/projetos/monan_das/$USER/projects/mpas-bmatrix-global"
+  case_dir: "{repo_root}/configs/mpas/cases/global-x1.10242"
+  init_time: "2026-06-12_00:00:00"
+  safe_time: "2026-06-12_00.00.00"
+  lead_hours: "6"
+  dt: "1200"
+  render_root: "/p/projetos/monan_das/$USER/work/mpas-rendered/global-x1.10242"
+
+# This workflow renders only MPAS configuration artifacts. A later workflow
+# layer stages links, executes MPAS, and validates NetCDF outputs.
+tasks:
+  - name: render_static
+    argv:
+      - bash
+      - "{repo_root}/scripts/mpas-render"
+      - --case
+      - "{case_dir}"
+      - --stage
+      - static
+      - --init-time
+      - "{init_time}"
+      - --dt
+      - "{dt}"
+      - --set
+      - "render_root={render_root}"
+    cwd: "{repo_root}"
+    inputs:
+      required:
+        - scripts/mpas-render
+        - configs/mpas/cases/global-x1.10242/case.yaml
+    outputs:
+      required:
+        - "{render_root}/static/namelist.init_atmosphere"
+        - "{render_root}/static/streams.init_atmosphere"
+        - "{render_root}/static/mpas-render-manifest.json"
+
+  - name: render_init
+    argv:
+      - bash
+      - "{repo_root}/scripts/mpas-render"
+      - --case
+      - "{case_dir}"
+      - --stage
+      - init
+      - --init-time
+      - "{init_time}"
+      - --dt
+      - "{dt}"
+      - --set
+      - "render_root={render_root}"
+    cwd: "{repo_root}"
+    inputs:
+      required:
+        - scripts/mpas-render
+        - configs/mpas/cases/global-x1.10242/case.yaml
+    outputs:
+      required:
+        - "{render_root}/init/{safe_time}/namelist.init_atmosphere"
+        - "{render_root}/init/{safe_time}/streams.init_atmosphere"
+        - "{render_root}/init/{safe_time}/mpas-render-manifest.json"
+
+  - name: render_forecast
+    argv:
+      - bash
+      - "{repo_root}/scripts/mpas-render"
+      - --case
+      - "{case_dir}"
+      - --stage
+      - forecast
+      - --init-time
+      - "{init_time}"
+      - --lead-hours
+      - "{lead_hours}"
+      - --dt
+      - "{dt}"
+      - --set
+      - "render_root={render_root}"
+    cwd: "{repo_root}"
+    inputs:
+      required:
+        - scripts/mpas-render
+        - configs/mpas/cases/global-x1.10242/case.yaml
+    outputs:
+      required:
+        - "{render_root}/forecast/{safe_time}/f006_dt1200_np128/namelist.atmosphere"
+        - "{render_root}/forecast/{safe_time}/f006_dt1200_np128/streams.atmosphere"
+        - "{render_root}/forecast/{safe_time}/f006_dt1200_np128/mpas-render-manifest.json"
