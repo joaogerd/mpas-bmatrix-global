@@ -71,26 +71,48 @@ mpasbcov
 
 Esses comandos são usados ao longo do tutorial.
 
-### 2.2. Criar o ambiente Conda
+### 2.2. Criar e preparar o ambiente Conda
 
-No JACI, carregue o ambiente base do Conda e crie o ambiente `mpaswf`:
+No JACI, carregue o módulo do Anaconda e inicialize o ambiente Conda:
+
+```bash
+module load anaconda
+start_conda
+```
+
+Em seguida, crie o ambiente `mpaswf` com Python 3.11:
 
 ```bash
 conda create -n mpaswf python=3.11 -y
 ```
 
-Ative o ambiente:
+Ative o ambiente criado:
 
 ```bash
 conda activate mpaswf
 ```
 
-Instale as dependências principais:
+Por fim, atualize o `pip` e instale as dependências Python necessárias:
 
 ```bash
 python -m pip install --upgrade pip
-python -m pip install PyYAML numpy netCDF4 cftime xarray matplotlib
+
+python -m pip install \
+  PyYAML \
+  numpy \
+  netCDF4 \
+  cftime \
+  xarray \
+  matplotlib
 ```
+
+> Nas próximas sessões, basta carregar o módulo, executar `start_conda` e ativar novamente o ambiente:
+>
+> ```bash
+> module load anaconda
+> start_conda
+> conda activate mpaswf
+> ```
 
 A dependência `matplotlib` é necessária para os diagnósticos gráficos, mesmo que não esteja listada como dependência obrigatória principal no `pyproject.toml`.
 
