@@ -1,0 +1,7 @@
+includes:
+  - ../global-x1.10242/case.yaml
+  - ../../overlays/monan-jedi-da.yaml
+
+case:
+  name: global-x1.10242-monan-jedi
+  description: Global x1.10242 case with the optional JEDI DA-state stream
