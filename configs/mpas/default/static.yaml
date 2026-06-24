@@ -1,41 +1,78 @@
+# =============================================================================
+# MPAS defaults: estágio static
+# =============================================================================
+#
+# Propósito
+# ---------
+# Define o primeiro estágio do fluxo MPAS real-data. Ele usa a grade horizontal
+# e dados geográficos WPS para produzir static.nc e arquivos auxiliares ligados
+# à malha. Não interpola a atmosfera e não cria a condição inicial.
+#
+# Alterações neste arquivo afetam todos os casos que incluem este default.
+# Modifique aqui somente regras estruturais do MPAS; valores de malha e número
+# de níveis permanecem no arquivo do caso.
+# =============================================================================
+
 stages:
   static:
+    # Diretório que receberá os arquivos renderizados deste estágio.
     output_dir: "{render_root}/static"
+
+    # Namelist do executável mpas_init_atmosphere.
     namelist:
+      # Template fornecido pelo build MPAS instalado no site.
       template: "{init_share}/namelist.init_atmosphere"
+      # Nome do namelist gerado pelo renderer.
       output: namelist.init_atmosphere
+      # As chaves abaixo são grupos Fortran reais do template MPAS.
       groups:
         nhyd_model:
+          # Caso 7: inicialização atmosférica real-data do MPAS.
           config_init_case: 7
+          # Static é instantâneo; início e fim correspondem ao ciclo solicitado.
           config_start_time: "'{init_time}'"
           config_stop_time: "'{init_time}'"
         dimensions:
+          # Número de níveis verticais escolhido no arquivo do caso.
           config_nvertlevels: "{nvertlevels}"
         data_sources:
+          # Base local de geografia WPS definida pelo arquivo de site.
           config_geog_data_path: "'{wps_geog_data_path}/'"
         decomposition:
+          # Prefixo do arquivo de partição usado pelo PIO/MPAS.
           config_block_decomp_file_prefix: "'{graph_basename}.part.'"
         preproc_stages:
+          # Habilita somente a interpolação de campos estáticos neste estágio.
           config_static_interp: true
+          # Gera dados estáticos de gravity-wave drag quando suportados pelo build.
           config_native_gwd_static: true
+          # Mantém desativado o fluxo GSL não usado pelo caso global base.
           config_native_gwd_gsl_static: false
+          # A grade vertical e a interpolação meteorológica ocorrem no estágio init.
           config_vertical_grid: false
           config_met_interp: false
+
+    # Streams XML do mpas_init_atmosphere.
     streams:
       template: "{init_share}/streams.init_atmosphere"
       output: streams.init_atmosphere
       streams:
         input:
           attributes:
+            # Grade MPAS usada como única entrada geométrica deste estágio.
             filename_template: "{grid_local_name}"
             input_interval: initial_only
         output:
           attributes:
+            # Produto estático principal consumido por init e forecast.
             filename_template: "{static_output_name}"
+            # Permite regenerar o produto no mesmo diretório de trabalho.
             clobber_mode: overwrite
         ugwp_oro_data:
           attributes:
+            # Produto orográfico auxiliar da física UGWP, dependente da malha.
             filename_template: "{ugwp_oro_output_name}"
         surface:
           attributes:
+            # Produto auxiliar de superfície, também dependente da malha.
             filename_template: "{surface_update_output_name}"
