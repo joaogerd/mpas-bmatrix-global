@@ -18,7 +18,9 @@ bash scripts/wps/11_probe_wps_build_environment.sh
 bash scripts/wps/12_build_wps_ungrib.sh
 ```
 
-O passo 11 é não destrutivo: ele apenas verifica as dependências. O passo 12 não recompila se `ungrib.exe` já existir; use `FORCE_WPS_REBUILD=true` apenas para forçar uma nova configuração e compilação.
+O passo 11 é não destrutivo: ele apenas verifica as dependências. Antes de decidir se pode reaproveitar `ungrib.exe`, o passo 12 aplica automaticamente o patch JasPer em `ungrib/src/ngl/g2/dec_jpeg2000.c`: a chamada obsoleta `jpc_decode()` é substituída pela API pública `jas_image_decode(..., jas_image_strtofmt("jpc"), ...)`.
+
+O script `scripts/wps/14_patch_wps_dec_jpeg2000.sh` permanece disponível para inspeção ou aplicação isolada do patch, mas **não é uma etapa manual do procedimento normal**, pois já é chamado pelo passo 12. Quando a fonte é corrigida após a criação de um executável, o build detecta que ela está mais nova e recompila, evitando a reutilização de um `ungrib.exe` desatualizado.
 
 ## Caminhos e configuração
 
