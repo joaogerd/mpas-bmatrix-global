@@ -8,9 +8,10 @@ case:
 
 context:
   mesh_name: x1.10242
+  mesh_resolution_km: 240
   nproc: 128
   nvertlevels: 55
-  mesh_root: "{project_root}/projects/mpas_meshes/quasi_uniform/x1.10242_240km"
+  mesh_root: "{mesh_catalog_root}/x1.10242_240km"
   grid_path: "{mesh_root}/mesh/x1.10242.grid.nc"
   grid_local_name: "x1.10242.grid.nc"
   graph_path: "{mesh_root}/graph/x1.10242.graph.info"
