@@ -87,6 +87,8 @@ exceções codificadas em Python.
 
 ## Uso
 
+Em uma instalação Python normal, o comando instalado é `mpas-render`:
+
 ```bash
 mpas-render \
   --case configs/mpas/cases/global-x1.10242 \
@@ -96,6 +98,18 @@ mpas-render \
   --dt 1200 \
   --set work_root=/p/projetos/monan_das/$USER/work/mpas \
   --set atmosphere_share=/p/projetos/monan_das/$USER/builds/monan-jedi-mpas/share/MPAS/core_atmosphere
+```
+
+No JACI, enquanto a instalação editável do pacote não estiver disponível, use
+o launcher da árvore do repositório:
+
+```bash
+bash scripts/mpas-render \
+  --case configs/mpas/cases/global-x1.10242 \
+  --stage forecast \
+  --init-time 2026-06-12_00:00:00 \
+  --lead-hours 48 \
+  --dt 1200
 ```
 
 O comando deriva `safe_time`, `valid_time` e `run_duration` a partir de
