@@ -1,0 +1,20 @@
+schema: mpas-case/v1
+
+case:
+  family: mpas-atmosphere-global
+
+context:
+  work_root: "{workspace_root}/mpas-bmatrix-global"
+  mesh_root: "{mesh_catalog_root}/{mesh_name}_{mesh_resolution_km}km"
+  grid_path: "{mesh_root}/mesh/{mesh_name}.grid.nc"
+  grid_local_name: "{mesh_name}.grid.nc"
+  graph_path: "{mesh_root}/graph/{mesh_name}.graph.info"
+  graph_basename: "{mesh_name}.graph.info"
+  partition_path: "{mesh_root}/partitions/{graph_basename}.part.{nproc}"
+  static_output_name: "{mesh_name}.static.nc"
+  init_output_name: "{mesh_name}.init.{safe_time}.nc"
+  surface_update_output_name: "{mesh_name}.sfc_update.nc"
+  ugwp_oro_output_name: "{mesh_name}.ugwp_oro_data.nc"
+  restart_filename: "restart.$Y-$M-$D_$h.$m.$s.nc"
+  output_interval: "06:00:00"
+  render_root: "{work_root}/mpas-rendered/{case_name}"
