@@ -1,4 +1,32 @@
 #!/usr/bin/env bash
+#BOP
+# !ROUTINE: 11_probe_wps_build_environment.sh
+# !DESCRIPTION:
+#   Performs a read-only readiness check for building WPS/ungrib.exe. It
+#   validates the WPS source tree, required commands, NetCDF prefixes and the
+#   JasPer, libpng and zlib directories needed for GRIB2 support. It never runs
+#   WPS configure and does not modify the source tree or dependency installs.
+# !INTERFACE:
+#   bash scripts/wps/11_probe_wps_build_environment.sh
+# !ARGUMENTS:
+#   No positional arguments are accepted. Path variables from _common.sh apply.
+#   WPS_DEP_SEARCH_ROOTS supplies additional colon-separated dependency roots;
+#   JASPERINC, JASPERLIB, PNG_INC, PNG_LIB, ZLIB_INC and ZLIB_LIB override
+#   automatic discovery. Set STRICT_WPS_PROBE=true to return a non-zero status
+#   whenever a prerequisite is missing.
+# !OUTPUTS:
+#   Writes a diagnostic report to standard output. By default, missing
+#   prerequisites are reported without causing failure; strict mode exits with
+#   status 1. The script does not create or overwrite files.
+# !NOTES:
+#   Run this after loading the target compiler and NetCDF environment. Its
+#   output can be used directly to select explicit dependency paths for the
+#   build stage.
+# !REVISION HISTORY:
+#   24 Jun 2026 - Documentation added for the non-destructive WPS probe.
+# !SEE ALSO:
+#   _common.sh, 10_download_wps_assets.sh and 12_build_wps_ungrib.sh.
+#EOP
 set -euo pipefail
 
 # Non-destructive probe of the environment required to compile WPS/ungrib.
