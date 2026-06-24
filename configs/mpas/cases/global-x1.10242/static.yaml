@@ -13,6 +13,8 @@ stages:
           config_nvertlevels: "{nvertlevels}"
         decomposition:
           config_block_decomp_file_prefix: "'{graph_basename}.part.'"
+        data_sources:
+          config_geog_data_path: "'{wps_geog_data_path}/'"
         preproc_stages:
           config_static_interp: true
           config_native_gwd_static: true
