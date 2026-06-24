@@ -30,8 +30,8 @@ tasks:
     cwd: "{repo_root}"
     inputs:
       required:
-        - scripts/mpas-render
-        - configs/mpas/cases/global-x1.10242/case.yaml
+        - "{repo_root}/scripts/mpas-render"
+        - "{repo_root}/configs/mpas/cases/global-x1.10242/case.yaml"
     outputs:
       required:
         - "{render_root}/static/namelist.init_atmosphere"
@@ -55,8 +55,8 @@ tasks:
     cwd: "{repo_root}"
     inputs:
       required:
-        - scripts/mpas-render
-        - configs/mpas/cases/global-x1.10242/case.yaml
+        - "{repo_root}/scripts/mpas-render"
+        - "{repo_root}/configs/mpas/cases/global-x1.10242/case.yaml"
     outputs:
       required:
         - "{render_root}/init/{safe_time}/namelist.init_atmosphere"
@@ -82,8 +82,8 @@ tasks:
     cwd: "{repo_root}"
     inputs:
       required:
-        - scripts/mpas-render
-        - configs/mpas/cases/global-x1.10242/case.yaml
+        - "{repo_root}/scripts/mpas-render"
+        - "{repo_root}/configs/mpas/cases/global-x1.10242/case.yaml"
     outputs:
       required:
         - "{render_root}/forecast/{safe_time}/f006_dt1200_np128/namelist.atmosphere"
