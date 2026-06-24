@@ -1,4 +1,26 @@
+# =============================================================================
+# Overlay opcional: MONAN-JEDI
+# =============================================================================
+#
+# Propósito
+# ---------
+# Este arquivo não é um caso MPAS completo. Ele deve ser incluído depois de um
+# arquivo em configs/mpas/cases/ quando o experimento precisar produzir o
+# estado de assimilação usado pelo MONAN-JEDI.
+#
+# Exemplo de composição
+# ---------------------
+# includes:
+#   - ../cases/global-x1.10242.yaml
+#   - monan-jedi.yaml
+#
+# O caso MPAS puro desativa da_state. Este overlay o reativa como saída com o
+# pacote jedi_da. Não inclua este arquivo em forecasts sem essa necessidade.
+# =============================================================================
+
 context:
+  # Convenção de nome para o estado produzido pelo stream da_state.
+  # Os marcadores $Y, $M, $D, $h, $m e $s são expandidos pelo MPAS.
   da_state_filename: "mpasout.$Y-$M-$D_$h.$m.$s.nc"
 
 stages:
@@ -6,13 +28,19 @@ stages:
     streams:
       streams:
         da_state:
+          # Mantém tag dinâmica, necessária para emissão de um arquivo de saída.
           tag: stream
           attributes:
+            # O stream produz, e não lê, o estado para assimilação.
             type: output
+            # Precisão e backend NetCDF esperados pelo fluxo JEDI.
             precision: single
             io_type: pnetcdf,cdf5
+            # Pacote MPAS-JEDI que ativa este stream no build compatível.
             packages: jedi_da
+            # Nome do arquivo por ciclo/tempo de saída.
             filename_template: "{da_state_filename}"
             filename_interval: output_interval
             output_interval: "{output_interval}"
+            # Permite refazer um ciclo no mesmo diretório de trabalho.
             clobber_mode: overwrite
