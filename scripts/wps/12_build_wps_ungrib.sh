@@ -3,8 +3,9 @@
 # !ROUTINE: 12_build_wps_ungrib.sh
 # !DESCRIPTION:
 #   Configures and builds WPS/ungrib.exe using the portable installation layout.
-#   It prepares a local NetCDF compatibility prefix with symbolic links, resolves
-#   the GRIB2 dependencies, updates configure.wps and records build provenance.
+#   It applies the required JasPer compatibility patch, prepares a local NetCDF
+#   compatibility prefix with symbolic links, resolves GRIB2 dependencies,
+#   updates configure.wps and records build provenance.
 # !INTERFACE:
 #   bash scripts/wps/12_build_wps_ungrib.sh
 # !ARGUMENTS:
@@ -14,21 +15,19 @@
 # !OUTPUTS:
 #   WPS_SRC_DIR/ungrib.exe, build logs, NetCDF compatibility links and provenance files.
 # !NOTES:
-#   Existing valid executables are preserved unless FORCE_WPS_REBUILD=true.
+#   Existing valid executables are preserved unless their source is newer or
+#   FORCE_WPS_REBUILD=true.
 # !SEE ALSO:
-#   _common.sh, 10_download_wps_assets.sh and 11_probe_wps_build_environment.sh.
+#   _common.sh, _patches.sh, 10_download_wps_assets.sh and
+#   14_patch_wps_dec_jpeg2000.sh.
 #EOP
 set -euo pipefail
-
-# Build only WPS/ungrib.exe in a portable and repeatable way.
-#
-# A WPS source tree is configured only when ungrib.exe is absent or when
-# FORCE_WPS_REBUILD=true is supplied. The NetCDF compatibility directory is
-# refreshed through symlinks; the original NetCDF installations are never altered.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=_common.sh
 source "${SCRIPT_DIR}/_common.sh"
+# shellcheck source=_patches.sh
+source "${SCRIPT_DIR}/_patches.sh"
 
 FORCE_WPS_REBUILD="${FORCE_WPS_REBUILD:-false}"
 WPS_CONFIGURE_OPTION="${WPS_CONFIGURE_OPTION:-1}"
@@ -53,6 +52,12 @@ fi
 
 mkdir -p "${WPS_LOG_DIR}"
 
+# The patch uses Python and must run before deciding whether a pre-existing
+# executable can be reused.
+wps_require_command python3
+wps_apply_dec_jpeg2000_patch
+WPS_PATCH_TARGET="${WPS_SRC_DIR}/ungrib/src/ngl/g2/dec_jpeg2000.c"
+
 echo "=== Configuração da compilação WPS/ungrib ==="
 echo "date_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "hostname=$(hostname)"
@@ -64,8 +69,18 @@ echo "WPS_CONFIGURE_OPTION=${WPS_CONFIGURE_OPTION}"
 echo "FORCE_WPS_REBUILD=${FORCE_WPS_REBUILD}"
 echo
 
+# When the patch changed the source, or when the patched source is newer than a
+# pre-existing executable, recompile automatically instead of silently reusing a
+# stale ungrib.exe.
+if [[ -x "${WPS_SRC_DIR}/ungrib.exe" ]] \
+  && ! wps_is_true "${FORCE_WPS_REBUILD}" \
+  && { wps_is_true "${WPS_DEC_JPEG2000_PATCH_CHANGED}" || [[ "${WPS_PATCH_TARGET}" -nt "${WPS_SRC_DIR}/ungrib.exe" ]]; }; then
+  echo "O código-fonte WPS foi atualizado após a geração de ungrib.exe; recompilação será feita."
+  FORCE_WPS_REBUILD=true
+fi
+
 if [[ -x "${WPS_SRC_DIR}/ungrib.exe" ]] && ! wps_is_true "${FORCE_WPS_REBUILD}"; then
-  echo "ungrib.exe já existe; nenhuma recompilação foi necessária:"
+  echo "ungrib.exe já existe e está consistente com o código-fonte; nenhuma recompilação foi necessária:"
   ls -lh "${WPS_SRC_DIR}/ungrib.exe"
   echo "Use FORCE_WPS_REBUILD=true para limpar, reconfigurar e recompilar."
   exit 0
@@ -260,6 +275,7 @@ PNG_LIB=${PNG_LIB}
 ZLIB_INC=${ZLIB_INC}
 ZLIB_LIB=${ZLIB_LIB}
 WPS_CONFIGURE_OPTION=${WPS_CONFIGURE_OPTION}
+WPS_DEC_JPEG2000_PATCH=jas_image_decode
 EOF
 mv "${WPS_SRC_DIR}/.mpas-bmatrix-global-wps-build.env.tmp" \
   "${WPS_SRC_DIR}/.mpas-bmatrix-global-wps-build.env"
