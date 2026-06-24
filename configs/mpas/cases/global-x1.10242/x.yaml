@@ -3,3 +3,4 @@ includes:
   - static.yaml
   - init.yaml
   - forecast.yaml
+  - forecast-optional-disabled.yaml
