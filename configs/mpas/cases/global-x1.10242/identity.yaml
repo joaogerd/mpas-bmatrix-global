@@ -1,0 +1,25 @@
+includes:
+  - ../../defaults/mpas-atmosphere.yaml
+  - ../../sites/jaci.yaml
+
+case:
+  name: global-x1.10242
+  description: Global quasi-uniform x1.10242 MPAS-Atmosphere case
+
+context:
+  mesh_name: x1.10242
+  mesh_resolution_km: 240
+  nproc: 128
+  nvertlevels: 55
+  mesh_root: "{mesh_catalog_root}/x1.10242_240km"
+  grid_path: "{mesh_root}/mesh/x1.10242.grid.nc"
+  grid_local_name: "x1.10242.grid.nc"
+  graph_path: "{mesh_root}/graph/x1.10242.graph.info"
+  graph_basename: "x1.10242.graph.info"
+  partitions_dir: "{mesh_root}/partitions"
+  partition_path: "{partitions_dir}/{graph_basename}.part.{nproc}"
+  static_output_name: "x1.10242.static.nc"
+  init_output_name: "x1.10242.init.{safe_time}.nc"
+  ugwp_oro_output_name: "x1.10242.ugwp_oro_data.nc"
+  surface_update_output_name: "x1.10242.sfc_update.nc"
+  render_root: "{work_root}/mpas-rendered/{case_name}"
