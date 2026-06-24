@@ -5,3 +5,4 @@ case:
 
 context:
   output_interval: "06:00:00"
+  restart_filename: "restart.$Y-$M-$D_$h.$m.$s.nc"
