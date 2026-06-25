@@ -7,6 +7,10 @@
 # Declara como transformar o resultado de `mpas-render --stage static` em um
 # diretório pronto para receber mpas_init_atmosphere. O preparador cria somente
 # links simbólicos e um manifesto; a execução do modelo ocorre em outra etapa.
+#
+# `required_files` evita submeter um job quando o conjunto WPS_GEOG está
+# incompleto. O MPAS usa config_topo_data = GMTED2010 no template atual e abre
+# especificamente topo_gmted2010_30s/index durante a interpolação de terreno.
 # =============================================================================
 
 stages:
@@ -21,6 +25,9 @@ stages:
       # Diretórios que devem existir, mas não precisam ser copiados para runtime.
       required_directories:
         - "{wps_geog_data_path}"
+      # Arquivos cuja ausência impede o MPAS antes de produzir static.nc.
+      required_files:
+        - "{wps_geog_data_path}/topo_gmted2010_30s/index"
       # Cada item cria um link dentro de output_dir.
       links:
         # Artefatos gerados pelo renderer.
