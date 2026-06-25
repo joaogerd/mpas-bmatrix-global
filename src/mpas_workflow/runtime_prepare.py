@@ -63,6 +63,13 @@ def _absolute_path(value: Any, label: str) -> Path:
     return Path(_as_non_empty_string(value, label)).expanduser().resolve()
 
 
+def _path_list(runtime: Mapping[str, Any], key: str) -> list[Path]:
+    raw = runtime.get(key, [])
+    if not isinstance(raw, list):
+        raise RuntimePrepareError(f"runtime.{key} deve ser uma lista.")
+    return [_absolute_path(value, f"runtime.{key}[{index}]") for index, value in enumerate(raw)]
+
+
 def _resolve_stage(case: CaseConfig, stage_name: str, context: Mapping[str, Any]) -> Mapping[str, Any]:
     stages = _as_mapping(case.data.get("stages", {}), "stages")
     if stage_name not in stages:
@@ -119,6 +126,7 @@ def _preflight(
     executable: Path,
     links: Sequence[RuntimeLink],
     required_directories: Sequence[Path],
+    required_files: Sequence[Path],
 ) -> None:
     problems: list[str] = []
     if not executable.is_file() or not os.access(executable, os.X_OK):
@@ -126,6 +134,9 @@ def _preflight(
     for directory in required_directories:
         if not directory.is_dir():
             problems.append(f"diretório ausente: {directory}")
+    for required_file in required_files:
+        if not required_file.is_file():
+            problems.append(f"arquivo obrigatório ausente: {required_file}")
     for link in links:
         if not link.source.is_file():
             problems.append(f"arquivo ausente: {link.source}")
@@ -190,13 +201,8 @@ def prepare_stage(
         raise RuntimePrepareError("runtime.globs deve ser uma lista.")
     links.extend(_expand_globs(raw_globs, runtime_dir))
 
-    raw_directories = runtime.get("required_directories", [])
-    if not isinstance(raw_directories, list):
-        raise RuntimePrepareError("runtime.required_directories deve ser uma lista.")
-    required_directories = [
-        _absolute_path(value, f"runtime.required_directories[{index}]")
-        for index, value in enumerate(raw_directories)
-    ]
+    required_directories = _path_list(runtime, "required_directories")
+    required_files = _path_list(runtime, "required_files")
 
     expected_outputs = runtime.get("expected_outputs", [])
     if not isinstance(expected_outputs, list) or not all(
@@ -204,7 +210,7 @@ def prepare_stage(
     ):
         raise RuntimePrepareError("runtime.expected_outputs deve ser uma lista de strings não vazias.")
 
-    _preflight(executable_link.source, links, required_directories)
+    _preflight(executable_link.source, links, required_directories, required_files)
     manifest = runtime_dir / str(runtime.get("manifest", "mpas-runtime-manifest.json"))
 
     if not dry_run:
@@ -221,6 +227,7 @@ def prepare_stage(
             "runtime_dir": str(runtime_dir),
             "executable": str(executable_link.destination),
             "required_directories": [str(path) for path in required_directories],
+            "required_files": [str(path) for path in required_files],
             "links": [
                 {"source": str(link.source), "destination": str(link.destination)} for link in links
             ],
