@@ -1,7 +1,0 @@
-schema: mpas-case/v1
-
-case:
-  family: mpas-atmosphere
-
-context:
-  output_interval: "06:00:00"

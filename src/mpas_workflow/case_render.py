@@ -1,19 +1,11 @@
 """Render MPAS configuration artifacts from layered, case-oriented YAML.
 
-The renderer intentionally contains only generic concerns:
-
-* loading a resolved scenario;
-* rendering explicit placeholders;
-* patching a Fortran namelist by group and key;
-* patching MPAS XML streams by stream name and attributes;
-* writing a manifest that records exact inputs and outputs.
-
-It does not submit jobs, run WPS, create a B matrix, or assume JEDI. Those
-belong to callers and orchestrators such as simpleWorkflow.
+The renderer deliberately handles only deterministic artifact generation. It
+loads a case, resolves placeholders, patches a Fortran namelist and MPAS XML
+streams, then records the exact render context and template hashes.
 """
 from __future__ import annotations
 
-import argparse
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import hashlib
@@ -41,7 +33,7 @@ class RenderError(ValueError):
 
 @dataclass(frozen=True)
 class RenderResult:
-    """Paths emitted by a deterministic stage render."""
+    """Paths emitted by one deterministic stage render."""
 
     case_name: str
     stage: str
@@ -84,7 +76,9 @@ def _namelist_group_bounds(lines: list[str], group: str) -> tuple[int, int] | No
     return None
 
 
-def _replace_option(lines: list[str], start: int, end: int, key: str, value: Any) -> tuple[list[str], int]:
+def _replace_option(
+    lines: list[str], start: int, end: int, key: str, value: Any
+) -> tuple[list[str], int]:
     option = re.compile(rf"^(?P<indent>\s*){re.escape(key)}\s*=.*$", re.IGNORECASE)
     matches = [index for index in range(start + 1, end) if option.match(lines[index])]
 
@@ -97,8 +91,9 @@ def _replace_option(lines: list[str], start: int, end: int, key: str, value: Any
     rendered = _fortran_value(value)
     if matches:
         index = matches[0]
-        indent = option.match(lines[index]).group("indent")  # type: ignore[union-attr]
-        lines[index] = f"{indent}{key} = {rendered}\n"
+        match = option.match(lines[index])
+        assert match is not None
+        lines[index] = f"{match.group('indent')}{key} = {rendered}\n"
         for duplicate in reversed(matches[1:]):
             del lines[duplicate]
             end -= 1
@@ -115,28 +110,27 @@ def _replace_option(lines: list[str], start: int, end: int, key: str, value: Any
 
 
 def patch_namelist(text: str, groups: Mapping[str, Any], *, strict_groups: bool = True) -> str:
-    """Patch a Fortran namelist using a ``group -> option -> value`` mapping.
+    """Patch a Fortran namelist with ``group -> option -> value`` mappings.
 
-    A null option value removes every occurrence of that option. Missing options
-    are inserted before the group's closing slash. This makes new MPAS options
-    such as the modern ``config_epssm_*`` family declarative instead of being
-    embedded in Python code.
+    A YAML null removes the option. An absent option is inserted before the
+    group's closing slash. This keeps version-specific MPAS settings in YAML.
     """
     lines = text.splitlines(keepends=True)
     if text and not text.endswith("\n"):
         lines[-1] += "\n"
 
     for group, entries in groups.items():
-        name = _as_non_empty_string(group, "nome do grupo de namelist")
-        options = _as_mapping(entries, f"namelist.groups.{name}")
-        bounds = _namelist_group_bounds(lines, name)
+        group_name = _as_non_empty_string(group, "nome do grupo de namelist")
+        options = _as_mapping(entries, f"namelist.groups.{group_name}")
+        bounds = _namelist_group_bounds(lines, group_name)
         if bounds is None:
             if strict_groups:
-                raise RenderError(f"Grupo &{name} não encontrado no namelist.")
+                raise RenderError(f"Grupo &{group_name} não encontrado no namelist.")
             continue
+
         start, end = bounds
         for key, value in options.items():
-            option = _as_non_empty_string(key, f"opção de &{name}")
+            option = _as_non_empty_string(key, f"opção de &{group_name}")
             lines, end = _replace_option(lines, start, end, option, value)
 
     return "".join(lines)
@@ -156,7 +150,12 @@ def _xml_value(value: Any) -> str:
 
 
 def patch_streams_xml(text: str, streams: Mapping[str, Any]) -> str:
-    """Patch XML streams by name without assuming a particular MPAS case."""
+    """Patch MPAS streams by name.
+
+    Declaring ``tag`` is explicit permission to convert an existing stream tag.
+    This supports MPAS templates where an input ``immutable_stream`` named
+    ``restart`` must become a dynamic output ``stream`` for a forecast case.
+    """
     try:
         root = ET.fromstring(text)
     except ET.ParseError as exc:
@@ -167,7 +166,8 @@ def patch_streams_xml(text: str, streams: Mapping[str, Any]) -> str:
         spec = _as_mapping(raw_spec, f"streams.{stream_name}")
         stream = _find_stream(root, stream_name)
         create = bool(spec.get("create", False))
-        tag = str(spec.get("tag", "stream"))
+        requested_tag = spec.get("tag")
+        tag = _as_non_empty_string(requested_tag, f"tag de stream {stream_name}") if requested_tag is not None else "stream"
 
         if stream is None:
             if not create:
@@ -177,12 +177,12 @@ def patch_streams_xml(text: str, streams: Mapping[str, Any]) -> str:
             stream = ET.Element(tag)
             stream.set("name", stream_name)
             root.append(stream)
-        elif stream.tag != tag and "tag" in spec:
-            raise RenderError(
-                f"Stream {stream_name!r} tem tag {stream.tag!r}, mas a configuração exige {tag!r}."
-            )
+        elif requested_tag is not None and stream.tag != tag:
+            stream.tag = tag
 
-        attributes = _as_mapping(spec.get("attributes", {}), f"streams.{stream_name}.attributes")
+        attributes = _as_mapping(
+            spec.get("attributes", {}), f"streams.{stream_name}.attributes"
+        )
         for attribute, value in attributes.items():
             attr_name = _as_non_empty_string(attribute, f"atributo de stream {stream_name}")
             if value is None:
@@ -201,7 +201,9 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _resolve_output_dir(case: CaseConfig, stage: Mapping[str, Any], override: str | Path | None) -> Path:
+def _resolve_output_dir(
+    case: CaseConfig, stage: Mapping[str, Any], override: str | Path | None
+) -> Path:
     if override is not None:
         return Path(override).expanduser().resolve()
     raw = _as_non_empty_string(stage.get("output_dir"), "stages.<stage>.output_dir")
@@ -217,7 +219,9 @@ def _read_template(path: Path, label: str, dry_run: bool) -> str | None:
     return path.read_text()
 
 
-def _stage_config(case: CaseConfig, stage_name: str, context: Mapping[str, Any]) -> Mapping[str, Any]:
+def _stage_config(
+    case: CaseConfig, stage_name: str, context: Mapping[str, Any]
+) -> Mapping[str, Any]:
     stages = _as_mapping(case.data.get("stages", {}), "stages")
     if stage_name not in stages:
         available = ", ".join(sorted(str(name) for name in stages)) or "nenhum"
@@ -233,7 +237,7 @@ def render_stage(
     output_dir: str | Path | None = None,
     dry_run: bool = False,
 ) -> RenderResult:
-    """Render namelist/streams plus a manifest for one declarative MPAS stage."""
+    """Render namelist/streams and a manifest for one declarative MPAS stage."""
     context = resolve_context(case, overrides)
     stage = _stage_config(case, stage_name, context)
     target_dir = _resolve_output_dir(case, stage, output_dir)
@@ -303,16 +307,8 @@ def render_stage(
     )
 
 
-def _parse_assignment(value: str) -> tuple[str, str]:
-    if "=" not in value:
-        raise argparse.ArgumentTypeError("--set deve usar o formato CHAVE=VALOR.")
-    key, raw = value.split("=", 1)
-    if not key:
-        raise argparse.ArgumentTypeError("--set exige uma chave não vazia.")
-    return key, raw
-
-
 def _time_context(init_time: str | None, lead_hours: int | None, dt: int | None) -> dict[str, Any]:
+    """Build runtime placeholders supplied by the renderer command line."""
     context: dict[str, Any] = {}
     if init_time is not None:
         try:
@@ -337,46 +333,7 @@ def _time_context(init_time: str | None, lead_hours: int | None, dt: int | None)
     return context
 
 
-def parser() -> argparse.ArgumentParser:
-    value = argparse.ArgumentParser(
-        prog="mpas-render",
-        description="Renderiza namelist e streams MPAS a partir de um caso YAML agnóstico.",
-    )
-    value.add_argument("--case", required=True, help="Diretório do caso ou arquivo case.yaml")
-    value.add_argument("--stage", required=True, help="Estágio declarado em stages.<nome>")
-    value.add_argument("--output-dir", help="Sobrescreve stages.<nome>.output_dir")
-    value.add_argument("--init-time", help=f"Data inicial no formato {TIME_FORMAT}")
-    value.add_argument("--lead-hours", type=int)
-    value.add_argument("--dt", type=int)
-    value.add_argument("--set", dest="assignments", action="append", type=_parse_assignment, default=[])
-    value.add_argument("--dry-run", action="store_true", help="Mostra os artefatos planejados sem gravá-los")
-    return value
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = parser().parse_args(argv)
-    overrides = _time_context(args.init_time, args.lead_hours, args.dt)
-    overrides.update(dict(args.assignments))
-
-    try:
-        result = render_stage(
-            load_case_config(args.case),
-            args.stage,
-            overrides=overrides,
-            output_dir=args.output_dir,
-            dry_run=args.dry_run,
-        )
-    except (CaseConfigError, RenderError) as exc:
-        raise SystemExit(f"ERRO: {exc}") from exc
-
-    prefix = "PLANO" if args.dry_run else "OK"
-    print(f"{prefix}: caso={result.case_name} estágio={result.stage}")
-    print(f"  OUTPUT_DIR={result.output_dir}")
-    for path in result.outputs:
-        print(f"  OUTPUT={path}")
-    print(f"  MANIFEST={result.manifest}")
-    return 0
-
-
 if __name__ == "__main__":
+    from .case_render_cli import main
+
     raise SystemExit(main())

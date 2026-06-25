@@ -1,0 +1,71 @@
+# =============================================================================
+# MPAS defaults: estágio init
+# =============================================================================
+#
+# Propósito
+# ---------
+# Define o segundo estágio do fluxo MPAS real-data. Ele consome static.nc e os
+# arquivos intermediários FILE:* produzidos pelo WPS/ungrib para gerar a
+# condição inicial atmosférica e a grade vertical do ciclo solicitado.
+#
+# Este arquivo não define como FILE:* é baixado ou produzido. WPS é uma etapa
+# externa; aqui apenas se declara o contrato de entrada esperado pelo MPAS.
+# =============================================================================
+
+stages:
+  init:
+    # Um diretório distinto por ciclo evita sobrescrever init.nc de outras datas.
+    output_dir: "{render_root}/init/{safe_time}"
+
+    # Namelist do mpas_init_atmosphere, agora na fase vertical + meteorológica.
+    namelist:
+      template: "{init_share}/namelist.init_atmosphere"
+      output: namelist.init_atmosphere
+      groups:
+        nhyd_model:
+          # Mantém a inicialização real-data do MPAS.
+          config_init_case: 7
+          config_start_time: "'{init_time}'"
+          config_stop_time: "'{init_time}'"
+        dimensions:
+          # Deve ser compatível com a escolha do caso e com os dados verticais.
+          config_nvertlevels: "{nvertlevels}"
+        data_sources:
+          # Prefixos dos arquivos FILE:* e de superfície gerados pelo WPS.
+          config_met_prefix: "'FILE'"
+          config_sfc_prefix: "'FILE'"
+        decomposition:
+          # Prefixo da partição usado na execução paralela da inicialização.
+          config_block_decomp_file_prefix: "'{graph_basename}.part.'"
+        preproc_stages:
+          # static já foi produzido no estágio anterior, portanto é desativado.
+          config_static_interp: false
+          config_native_gwd_static: false
+          config_native_gwd_gsl_static: false
+          # Ativa a grade vertical e a interpolação meteorológica nesta fase.
+          config_vertical_grid: true
+          config_met_interp: true
+
+    # Streams que conectam static.nc, FILE:* e o init.nc produzido.
+    streams:
+      template: "{init_share}/streams.init_atmosphere"
+      output: streams.init_atmosphere
+      streams:
+        input:
+          attributes:
+            # O template usa este stream para o produto estático do estágio anterior.
+            filename_template: "{static_output_name}"
+            input_interval: initial_only
+        output:
+          attributes:
+            # Condição inicial datada que será consumida pelo forecast.
+            filename_template: "{init_output_name}"
+            clobber_mode: overwrite
+        ugwp_oro_data:
+          attributes:
+            # Reutiliza o produto orográfico gerado no estágio static.
+            filename_template: "{ugwp_oro_output_name}"
+        surface:
+          attributes:
+            # Reutiliza o produto auxiliar de superfície da mesma malha.
+            filename_template: "{surface_update_output_name}"
