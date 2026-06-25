@@ -1,0 +1,42 @@
+# =============================================================================
+# MPAS runtime defaults: static
+# =============================================================================
+#
+# Propósito
+# ---------
+# Declara como transformar o resultado de `mpas-render --stage static` em um
+# diretório pronto para receber mpas_init_atmosphere. O preparador cria somente
+# links simbólicos e um manifesto; a execução do modelo ocorre em outra etapa.
+# =============================================================================
+
+stages:
+  static:
+    runtime:
+      # Diretório de execução do estágio; separado do diretório de renderização.
+      output_dir: "{runtime_root}/static"
+      executable:
+        # Executável usado pelo estágio static do MPAS real-data.
+        source: "{mpas_init_executable}"
+        destination: mpas_init_atmosphere
+      # Diretórios que devem existir, mas não precisam ser copiados para runtime.
+      required_directories:
+        - "{wps_geog_data_path}"
+      # Cada item cria um link dentro de output_dir.
+      links:
+        # Artefatos gerados pelo renderer.
+        - source: "{render_root}/static/namelist.init_atmosphere"
+          destination: namelist.init_atmosphere
+        - source: "{render_root}/static/streams.init_atmosphere"
+          destination: streams.init_atmosphere
+        # Geometria, grafo e partição da malha.
+        - source: "{grid_path}"
+          destination: "{grid_local_name}"
+        - source: "{graph_path}"
+          destination: "{graph_basename}"
+        - source: "{partition_path}"
+          destination: "{graph_basename}.part.{nproc}"
+      # Produtos esperados depois de uma futura execução bem-sucedida do MPAS.
+      expected_outputs:
+        - "{static_output_name}"
+        - "{surface_update_output_name}"
+        - "{ugwp_oro_output_name}"
