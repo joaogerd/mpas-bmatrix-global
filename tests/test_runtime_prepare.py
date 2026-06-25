@@ -19,7 +19,7 @@ def write(path: Path, text: str = "") -> Path:
 
 def executable(path: Path) -> Path:
     write(path, "#!/usr/bin/env bash\nexit 0\n")
-    path.chmod(path.stat().st_mode | os.stat_result((0,) * 10).st_mode | 0o111)
+    path.chmod(path.stat().st_mode | 0o111)
     return path
 
 
@@ -82,6 +82,7 @@ def test_prepare_runtime_links_inputs_writes_manifest_and_is_idempotent(tmp_path
     assert manifest["schema"] == "mpas-runtime-manifest/v1"
     assert manifest["stage"] == "static"
     assert manifest["expected_outputs"] == [str(first.output_dir / "x1.static.nc")]
+    assert manifest["required_files"] == []
 
 
 def test_prepare_runtime_rejects_missing_input_before_creating_directory(tmp_path: Path):
@@ -89,6 +90,36 @@ def test_prepare_runtime_rejects_missing_input_before_creating_directory(tmp_pat
 
     with pytest.raises(RuntimePrepareError, match="arquivo ausente"):
         prepare_stage(case, "static")
+
+    assert not (tmp_path / "runtime").exists()
+
+
+def test_prepare_runtime_rejects_missing_required_file_before_creating_directory(tmp_path: Path):
+    root = tmp_path / "inputs"
+    model = executable(root / "bin" / "mpas_init_atmosphere")
+    geog = root / "geog"
+    geog.mkdir(parents=True)
+    required_index = geog / "topo_gmted2010_30s" / "index"
+    case_path = write(
+        tmp_path / "case.yaml",
+        f"""case:
+  name: unit-required-file
+stages:
+  static:
+    runtime:
+      output_dir: {tmp_path / 'runtime'}
+      executable:
+        source: {model}
+        destination: mpas_init_atmosphere
+      required_directories:
+        - {geog}
+      required_files:
+        - {required_index}
+""",
+    )
+
+    with pytest.raises(RuntimePrepareError, match="arquivo obrigatório ausente"):
+        prepare_stage(load_case_config(case_path), "static")
 
     assert not (tmp_path / "runtime").exists()
 
