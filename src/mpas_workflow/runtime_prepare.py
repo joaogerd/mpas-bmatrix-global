@@ -7,12 +7,13 @@ with executables and model inputs into an idempotent runtime directory.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import glob
 import json
 import os
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from .case_config import CaseConfig, CaseConfigError, resolve_context, resolve_structure
+from .case_config import CaseConfig, resolve_context, resolve_structure
 
 
 class RuntimePrepareError(ValueError):
@@ -82,52 +83,27 @@ def _link_from_spec(spec: Mapping[str, Any], runtime_dir: Path, label: str) -> R
     return RuntimeLink(source=source, destination=destination)
 
 
-def _expand_globs(
-    specs: Sequence[Any], runtime_dir: Path
-) -> list[RuntimeLink]:
+def _expand_globs(specs: Sequence[Any], runtime_dir: Path) -> list[RuntimeLink]:
     links: list[RuntimeLink] = []
     for index, raw in enumerate(specs):
         label = f"runtime.globs[{index}]"
         spec = _as_mapping(raw, label)
         pattern = _as_non_empty_string(spec.get("pattern"), f"{label}.pattern")
+        if not Path(pattern).is_absolute():
+            raise RuntimePrepareError(f"{label}.pattern deve ser um caminho absoluto: {pattern}")
         destination_dir = runtime_dir / _as_relative_path(
             spec.get("destination_dir", "."), f"{label}.destination_dir"
         )
         min_matches = spec.get("min_matches", 1)
         if not isinstance(min_matches, int) or min_matches < 0:
             raise RuntimePrepareError(f"{label}.min_matches deve ser um inteiro não negativo.")
-        matches = sorted(Path(item).resolve() for item in Path().glob(pattern) if Path(item).is_file())
+        matches = sorted(Path(item).resolve() for item in glob.glob(pattern) if Path(item).is_file())
         if len(matches) < min_matches:
             raise RuntimePrepareError(
                 f"{label} encontrou {len(matches)} arquivo(s), mas exige ao menos {min_matches}: {pattern}"
             )
         links.extend(RuntimeLink(source=source, destination=destination_dir / source.name) for source in matches)
     return links
-
-
-def _preflight(
-    executable: Path,
-    links: Sequence[RuntimeLink],
-    required_directories: Sequence[Path],
-) -> None:
-    missing: list[str] = []
-    if not executable.is_file():
-        missing.append(f"executável: {executable}")
-    for directory in required_directories:
-        if not directory.is_dir():
-            missing.append(f"diretório: {directory}")
-    for link in links:
-        if not link.source.is_file():
-            missing.append(f"arquivo: {link.source}")
-
-    destinations: set[Path] = set()
-    for link in links:
-        if link.destination in destinations:
-            missing.append(f"destino duplicado: {link.destination}")
-        destinations.add(link.destination)
-
-    if missing:
-        raise RuntimePrepareError("Insumos de runtime ausentes ou inválidos:\n- " + "\n- ".join(missing))
 
 
 def _symlink_matches(destination: Path, source: Path) -> bool:
@@ -139,17 +115,45 @@ def _symlink_matches(destination: Path, source: Path) -> bool:
         return False
 
 
+def _preflight(
+    executable: Path,
+    links: Sequence[RuntimeLink],
+    required_directories: Sequence[Path],
+) -> None:
+    problems: list[str] = []
+    if not executable.is_file() or not os.access(executable, os.X_OK):
+        problems.append(f"executável ausente ou não executável: {executable}")
+    for directory in required_directories:
+        if not directory.is_dir():
+            problems.append(f"diretório ausente: {directory}")
+    for link in links:
+        if not link.source.is_file():
+            problems.append(f"arquivo ausente: {link.source}")
+
+    destinations: set[Path] = set()
+    for link in links:
+        if link.destination in destinations:
+            problems.append(f"destino duplicado: {link.destination}")
+        destinations.add(link.destination)
+        if link.destination.exists() or link.destination.is_symlink():
+            if not _symlink_matches(link.destination, link.source):
+                problems.append(f"destino existente incompatível: {link.destination}")
+
+    if problems:
+        raise RuntimePrepareError(
+            "Insumos de runtime ausentes ou inválidos:\n- " + "\n- ".join(problems)
+        )
+
+
 def _materialize_link(link: RuntimeLink) -> None:
     link.destination.parent.mkdir(parents=True, exist_ok=True)
     if link.destination.is_symlink():
-        if _symlink_matches(link.destination, link.source):
-            return
-        link.destination.unlink()
-    elif link.destination.exists():
-        raise RuntimePrepareError(
-            f"Destino de runtime já existe e não é link simbólico: {link.destination}"
-        )
+        return
     os.symlink(link.source, link.destination)
+
+
+def _expected_output_paths(runtime_dir: Path, values: Sequence[str]) -> list[str]:
+    return [str(runtime_dir / _as_relative_path(value, "runtime.expected_outputs")) for value in values]
 
 
 def prepare_stage(
@@ -167,18 +171,19 @@ def prepare_stage(
     runtime_dir = _resolve_output_dir(runtime, output_dir)
 
     executable_spec = _as_mapping(runtime.get("executable"), "runtime.executable")
-    executable_source = _absolute_path(executable_spec.get("source"), "runtime.executable.source")
-    executable_destination = runtime_dir / _as_relative_path(
-        executable_spec.get("destination"), "runtime.executable.destination"
+    executable_link = RuntimeLink(
+        source=_absolute_path(executable_spec.get("source"), "runtime.executable.source"),
+        destination=runtime_dir
+        / _as_relative_path(executable_spec.get("destination"), "runtime.executable.destination"),
     )
-    executable_link = RuntimeLink(source=executable_source, destination=executable_destination)
 
     raw_links = runtime.get("links", [])
     if not isinstance(raw_links, list):
         raise RuntimePrepareError("runtime.links deve ser uma lista.")
     links = [executable_link]
     for index, raw in enumerate(raw_links):
-        links.append(_link_from_spec(_as_mapping(raw, f"runtime.links[{index}]"), runtime_dir, f"runtime.links[{index}]"))
+        spec = _as_mapping(raw, f"runtime.links[{index}]")
+        links.append(_link_from_spec(spec, runtime_dir, f"runtime.links[{index}]"))
 
     raw_globs = runtime.get("globs", [])
     if not isinstance(raw_globs, list):
@@ -194,15 +199,18 @@ def prepare_stage(
     ]
 
     expected_outputs = runtime.get("expected_outputs", [])
-    if not isinstance(expected_outputs, list) or not all(isinstance(item, str) and item for item in expected_outputs):
+    if not isinstance(expected_outputs, list) or not all(
+        isinstance(item, str) and item for item in expected_outputs
+    ):
         raise RuntimePrepareError("runtime.expected_outputs deve ser uma lista de strings não vazias.")
 
-    _preflight(executable_source, links, required_directories)
+    _preflight(executable_link.source, links, required_directories)
     manifest = runtime_dir / str(runtime.get("manifest", "mpas-runtime-manifest.json"))
 
     if not dry_run:
         for link in links:
             _materialize_link(link)
+        runtime_dir.mkdir(parents=True, exist_ok=True)
         manifest_data = {
             "schema": "mpas-runtime-manifest/v1",
             "case": case.name,
@@ -216,9 +224,8 @@ def prepare_stage(
             "links": [
                 {"source": str(link.source), "destination": str(link.destination)} for link in links
             ],
-            "expected_outputs": [str(runtime_dir / _as_relative_path(item, "runtime.expected_outputs")) for item in expected_outputs],
+            "expected_outputs": _expected_output_paths(runtime_dir, expected_outputs),
         }
-        runtime_dir.mkdir(parents=True, exist_ok=True)
         manifest.write_text(json.dumps(manifest_data, indent=2, sort_keys=True) + "\n")
 
     return RuntimePrepareResult(
