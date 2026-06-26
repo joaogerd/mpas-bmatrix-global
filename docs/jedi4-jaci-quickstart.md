@@ -12,12 +12,14 @@ Validate the canonical contract:
 python scripts/validate_jedi4_contract.py configs/bmatrix-x1.10242-jedi4.yaml
 ```
 
-Use the dedicated JACI configuration:
+Use the dedicated JACI configuration and JEDI-4 entry points:
 
 ```bash
-mpasbflow all --config configs/jaci-x1.10242-jedi4.yaml
+mpasbflow-jedi4 all --config configs/jaci-x1.10242-jedi4.yaml
 mpasbcov-jedi4 vbal-prepare --config configs/jaci-x1.10242-jedi4.yaml
 ```
+
+The JEDI-4 BFLOW entry point adds canonical derived variables before validating `FULL` and before creating NMC perturbations.
 
 After the VBAL PBS job completes, inspect its products before preparing HDIAG:
 
