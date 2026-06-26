@@ -39,16 +39,17 @@ context:
   # Catálogo institucional de malhas MPAS quasi-uniformes.
   mesh_catalog_root: "{project_root}/projects/mpas_meshes/quasi_uniform"
 
-  # Instalação compilada do MONAN-JEDI/MPAS usada pelo renderer.
-  mpas_install_root: "{project_root}/builds/monan-jedi-mpas"
-  # Templates e recursos do executável mpas_init_atmosphere.
-  init_share: "{mpas_install_root}/share/MPAS/core_init_atmosphere"
-  # Templates e recursos do executável mpas_atmosphere.
-  atmosphere_share: "{mpas_install_root}/share/MPAS/core_atmosphere"
-  # Caminhos dos executáveis, usados pela futura preparação de runtime.
-  mpas_init_executable: "{mpas_install_root}/bin/mpas_init_atmosphere"
-  mpas_atmosphere_executable: "{mpas_install_root}/bin/mpas_atmosphere"
-
   # Dados geográficos WPS locais para a etapa static do MPAS.
   # Não deve apontar para o caminho /glade presente em alguns templates NCAR.
   wps_geog_data_path: "{data_workspace_root}/mpas-bmatrix-global/external/WPS_GEOG/low_res_mandatory/WPS_GEOG_LOW_RES"
+
+# Layout padrão de uma instalação MPAS. O Python expõe internamente:
+# - {mpas_install_root}
+# - {mpas_init_executable}
+# - {mpas_atmosphere_executable}
+# - {init_share}
+# - {atmosphere_share}
+# Entradas absolutas opcionais, por exemplo mpas_atmosphere: /outro/bin/mpas_atmosphere,
+# sobrescrevem somente aquela chave e não usam root.
+install:
+  root: "{project_root}/builds/monan-jedi-mpas"
