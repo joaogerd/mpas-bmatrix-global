@@ -15,6 +15,8 @@ from typing import Any, Mapping
 
 import yaml
 
+from .install_paths import InstallPathError, resolve_install_paths
+
 
 class CaseConfigError(ValueError):
     """Raised when a layered MPAS case configuration is invalid."""
@@ -119,6 +121,45 @@ def render_text(template: str, context: Mapping[str, Any]) -> str:
         ) from exc
 
 
+def _stabilize_context(context: dict[str, Any]) -> dict[str, Any]:
+    for _ in range(max(1, len(context) + 1)):
+        changed = False
+        for key, value in list(context.items()):
+            if not isinstance(value, str):
+                continue
+            rendered = render_text(value, context)
+            if rendered != value:
+                context[key] = rendered
+                changed = True
+        if not changed:
+            return context
+    raise CaseConfigError("Não foi possível estabilizar os placeholders do bloco context.")
+
+
+def _add_install_context(case: CaseConfig, context: dict[str, Any]) -> None:
+    install = case.data.get("install")
+    if install is None:
+        return
+    try:
+        resolved = resolve_install_paths(
+            install,
+            render=lambda value: render_text(value, context),
+        )
+    except InstallPathError as exc:
+        raise CaseConfigError(f"install inválido: {exc}") from exc
+
+    context.update(
+        {
+            "mpas_init_executable": resolved["mpas_init"],
+            "mpas_atmosphere_executable": resolved["mpas_atmosphere"],
+            "init_share": resolved["init_share"],
+            "atmosphere_share": resolved["atmosphere_share"],
+        }
+    )
+    if "root" in resolved:
+        context["mpas_install_root"] = resolved["root"]
+
+
 def resolve_context(case: CaseConfig, overrides: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Build a deterministic flat context, resolving references between values."""
     raw = case.data.get("context", {})
@@ -132,19 +173,9 @@ def resolve_context(case: CaseConfig, overrides: Mapping[str, Any] | None = None
     if overrides:
         context.update(dict(overrides))
 
-    for _ in range(max(1, len(context) + 1)):
-        changed = False
-        for key, value in list(context.items()):
-            if not isinstance(value, str):
-                continue
-            rendered = render_text(value, context)
-            if rendered != value:
-                context[key] = rendered
-                changed = True
-        if not changed:
-            return context
-
-    raise CaseConfigError("Não foi possível estabilizar os placeholders do bloco context.")
+    _stabilize_context(context)
+    _add_install_context(case, context)
+    return _stabilize_context(context)
 
 
 def resolve_structure(value: Any, context: Mapping[str, Any]) -> Any:
