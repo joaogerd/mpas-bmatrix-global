@@ -17,7 +17,6 @@
 # resolvidos pelo renderer antes de gerar namelist e streams.
 # =============================================================================
 
-# Identifica o formato e permite validações futuras de configuração de site.
 schema: workflow-site/v1
 
 site:
@@ -26,7 +25,6 @@ site:
   # Agendador usado quando uma camada posterior preparar jobs de execução.
   scheduler: pbs
 
-# Contexto compartilhado por todos os casos que incluem este site.
 context:
   # Raiz pessoal de projetos no filesystem compartilhado do JACI.
   project_root: "/p/projetos/monan_das/$USER"
@@ -43,13 +41,11 @@ context:
   # Não deve apontar para o caminho /glade presente em alguns templates NCAR.
   wps_geog_data_path: "{data_workspace_root}/mpas-bmatrix-global/external/WPS_GEOG/low_res_mandatory/WPS_GEOG_LOW_RES"
 
-# Layout padrão de uma instalação MPAS. O Python expõe internamente:
-# - {mpas_install_root}
-# - {mpas_init_executable}
-# - {mpas_atmosphere_executable}
-# - {init_share}
-# - {atmosphere_share}
-# Entradas absolutas opcionais, por exemplo mpas_atmosphere: /outro/bin/mpas_atmosphere,
-# sobrescrevem somente aquela chave e não usam root.
+# Instalação MPAS. Nomes simples de executáveis são procurados em <root>/bin/.
+# Recursos podem ser relativos a <root>; para componentes externos, use caminho absoluto.
 install:
   root: "{project_root}/builds/monan-jedi-mpas"
+  mpas_init: mpas_init_atmosphere
+  mpas_atmosphere: mpas_atmosphere
+  init_share: share/MPAS/core_init_atmosphere
+  atmosphere_share: share/MPAS/core_atmosphere
