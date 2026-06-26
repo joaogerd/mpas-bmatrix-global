@@ -875,60 +875,168 @@ Esse manifesto informa às etapas seguintes onde estão as amostras.
 
 ---
 
-## 8. Gerar as amostras NMC
+## 8. Gerar os pares e o diagnóstico NMC
 
-Entre no repositório:
+Entre no repositório e carregue o ambiente de execução:
 
 ```bash
 cd /p/projetos/monan_das/joao.gerd/projects/mpas-bmatrix-global
 source scripts/load_jaci_env.sh
 conda activate mpaswf
-```
+````
 
-Rode:
+Use o período definido na seção 6 para gerar os pares NMC:
 
 ```bash
 mpaswf \
   --config configs/jaci-x1.10242.yaml \
   nmc range \
-  --start-valid-time 2026-06-10_00:00:00 \
-  --end-valid-time   2026-06-13_00:00:00 \
-  --valid-interval-hours 24 \
-  --dt 60 \
+  --start-valid-time "$START_VALID" \
+  --end-valid-time "$END_VALID" \
+  --valid-interval-hours "$VALID_INTERVAL_HOURS" \
+  --dt "$DT" \
   --submit \
   --wait \
   --poll-seconds 30 \
   --diff
 ```
 
-Essa etapa submete previsões MPAS e calcula as diferenças NMC.
+Essa etapa, para cada horário válido:
 
-Resultado esperado:
+1. prepara e submete as previsões MPAS necessárias;
+2. gera as previsões f048 e f024 com o mesmo horário válido;
+3. monta o par NMC usando os arquivos de `restart`;
+4. cria, com a opção `--diff`, um arquivo de diferença para diagnóstico.
+
+Os pares NMC são organizados em:
 
 ```text
-work/mpas-bmatrix-global/bmatrix/bflow_preprocessing/np128_2026061000_2026061300/output/YYYYMMDDHH/PTB_f48mf24.nc
+$WORK_ROOT/nmc_pairs/nmc_x1.10242_valid_YYYY-MM-DD_HH.00.00/
+```
+
+Em cada diretório de par, os produtos esperados são:
+
+```text
+f048.nc
+f024.nc
+pair.env
+README.md
+nmc_diff_f048_minus_f024.nc
+```
+
+Os arquivos `f048.nc` e `f024.nc` são links para os arquivos de
+`restart` das previsões MPAS. O arquivo
+`nmc_diff_f048_minus_f024.nc` é um diagnóstico da diferença NMC entre
+esses restarts.
+
+> **Importante:** o arquivo `nmc_diff_f048_minus_f024.nc` não é a
+> amostra usada diretamente na calibração da matriz B. As perturbações
+> usadas por VBAL, HDIAG e NICAS são geradas na etapa seguinte pelo
+> BFLOW.
+
+Verifique se os pares e as saídas MPAS foram gerados:
+
+```bash
+find "$WORK_ROOT/nmc_pairs" -name "nmc_diff_f048_minus_f024.nc" | sort
+
+find "$WORK_ROOT/runs" \
+  -type f \
+  -name "mpasout.*.nc" \
+  | sort
 ```
 
 ---
 
-## 9. Preparar o workspace BFLOW
+## 9. Executar e preparar o workspace BFLOW
 
-Depois que as diferenças NMC existem, defina:
+Depois que todas as previsões f048 e f024 estiverem concluídas, execute o
+BFLOW para gerar as perturbações NMC usadas na calibração da matriz B.
 
-```bash
-export BFLOW=/p/projetos/monan_das/joao.gerd/work/mpas-bmatrix-global/bmatrix/bflow_preprocessing/np128_2026061000_2026061300
+O BFLOW usa os arquivos:
+
+```text
+mpasout.YYYY-MM-DD_HH.MM.SS.nc
 ```
 
-Verifique:
+gerados pelo stream `da_state` do MPAS-JEDI. Portanto, ele não usa
+diretamente os arquivos `restart...nc` nem o arquivo de diagnóstico
+`nmc_diff_f048_minus_f024.nc` criado na seção anterior.
+
+Execute:
+
+```bash
+mpasbflow all \
+  --config configs/jaci-x1.10242.yaml \
+  --start-valid-time "$START_VALID" \
+  --end-valid-time "$END_VALID" \
+  --valid-interval-hours "$VALID_INTERVAL_HOURS" \
+  --dt "$DT" \
+  --clean-output
+```
+
+Para o período de exemplo definido na seção 6, o workspace será criado em:
+
+```text
+$WORK_ROOT/bmatrix/bflow_preprocessing/np128_2026061000_2026061300/
+```
+
+Defina uma variável para facilitar os comandos seguintes:
+
+```bash
+export BFLOW="$WORK_ROOT/bmatrix/bflow_preprocessing/np128_2026061000_2026061300"
+```
+
+O BFLOW cria um manifesto com os arquivos de entrada e, para cada horário
+válido, produz os seguintes arquivos:
+
+```text
+$BFLOW/output/YYYYMMDDHH/FULL_f48.nc
+$BFLOW/output/YYYYMMDDHH/FULL_f24.nc
+$BFLOW/output/YYYYMMDDHH/PTB_f48mf24.nc
+```
+
+Os produtos têm os seguintes papéis:
+
+```text
+FULL_f48.nc
+  previsão f048 processada pelo BFLOW, com as variáveis necessárias
+  para a calibração da B.
+
+FULL_f24.nc
+  previsão f024 processada pelo BFLOW, com as variáveis necessárias
+  para a calibração da B.
+
+PTB_f48mf24.nc
+  perturbação NMC calculada pelo BFLOW:
+
+  PTB = FULL_f48 - FULL_f24
+```
+
+O arquivo `PTB_f48mf24.nc` é a amostra efetivamente usada nas etapas
+VBAL, HDIAG e NICAS.
+
+Verifique o manifesto e os produtos gerados:
 
 ```bash
 cat "$BFLOW/manifest.tsv"
-find "$BFLOW/output" -name "PTB_f48mf24.nc" | sort
+
+find "$BFLOW/output" \
+  -type f \
+  \( \
+    -name "FULL_f24.nc" \
+    -o -name "FULL_f48.nc" \
+    -o -name "PTB_f48mf24.nc" \
+  \) \
+  | sort
 ```
 
-O `manifest.tsv` deve listar as datas válidas e os arquivos de origem.
+O arquivo `manifest.tsv` lista, para cada horário válido, os arquivos
+`mpasout` correspondentes às previsões f048 e f024 que alimentaram o
+BFLOW.
 
-Essa etapa é importante porque o `mpasbcov vbal-all` lê o `manifest.tsv`, copia os `PTB_f48mf24.nc` para um diretório padronizado `samples/` e cria a sequência de membros:
+Na etapa seguinte, o comando `mpasbcov vbal-all` usará esse workspace,
+copiará os arquivos `PTB_f48mf24.nc` para um diretório padronizado
+`samples/` e formará a sequência de membros:
 
 ```text
 PTB_f48mf24_001.nc
