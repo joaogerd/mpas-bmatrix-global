@@ -36,6 +36,14 @@ Antes de rodar no JACI, valide o contrato:
 python scripts/validate_jedi4_contract.py configs/bmatrix-x1.10242-jedi4.yaml
 ```
 
+Depois de renderizar um workspace BCOV com o contrato JEDI-4, valide que os YAMLs renderizados não têm `alias:`:
+
+```bash
+python scripts/check_no_jedi_alias.py <workspace-bcov>
+```
+
+Esse comando deve passar antes de VBAL, HDIAG, NICAS, SO e DIRAC serem considerados JEDI-4 canônicos.
+
 ## Validação no JACI
 
 A sequência mínima é:
