@@ -85,6 +85,7 @@ end
 
 
 def convert_pair(config, workspace: Path, pair: BflowPair) -> None:
+    workspace = Path(workspace).resolve()
     mesh_name = config["mesh"]["name"]
     wgt1 = workspace / "ESMF_weights" / f"MPAS_{mesh_name}_to_latlon_1p0_bilinear.nc"
     wgt2 = workspace / "ESMF_weights" / f"latlon_1p0_to_MPAS_{mesh_name}_bilinear.nc"
@@ -100,10 +101,10 @@ def convert_pair(config, workspace: Path, pair: BflowPair) -> None:
     ]:
         require_files([input_path], f"uv_to_psichi {label}")
         ncl_script = outdir / f"uv_to_psichi_{label}.ncl"
-        write_text(ncl_script, render_uv_to_psichi_ncl(input_path, output_path, template, wgt1, wgt2))
+        write_text(ncl_script, render_uv_to_psichi_ncl(input_path.resolve(), output_path.resolve(), template.resolve(), wgt1.resolve(), wgt2.resolve()))
         print(f"NCL {label} {pair.valid_time}")
         run_shell(
-            f"module load ncl 2>/dev/null || true; ncl '{ncl_script}' < /dev/null",
+            f"module load ncl 2>/dev/null || true; ncl '{ncl_script.resolve()}' < /dev/null",
             cwd=workspace,
             log_path=workspace / "logs" / f"03_convert_uv_to_psichi_{vcompact}_{label}.log",
         )
