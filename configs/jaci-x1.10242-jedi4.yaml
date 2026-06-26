@@ -1,0 +1,124 @@
+# JACI configuration for the canonical JEDI-4 B-matrix contract.
+# This file intentionally preserves the operational MPAS/JACI settings from
+# jaci-x1.10242.yaml and changes only the selected B-matrix contract.
+
+project:
+  name: mpas-bmatrix-global
+  project_root: /p/projetos/monan_das/joao.gerd/projects/mpas-bmatrix-global
+  data_root: /p/projetos/monan_das/joao.gerd/data/mpas-bmatrix-global
+  work_root: /p/projetos/monan_das/joao.gerd/work/mpas-bmatrix-global
+
+environment:
+  loader: scripts/load_jaci_env.sh
+
+install:
+  root: /p/projetos/monan_das/joao.gerd/builds/monan-jedi-mpas
+  mpas_init: /p/projetos/monan_das/joao.gerd/builds/monan-jedi-mpas/bin/mpas_init_atmosphere
+  mpas_atmosphere: /p/projetos/monan_das/joao.gerd/builds/monan-jedi-mpas/bin/mpas_atmosphere
+  init_share: /p/projetos/monan_das/joao.gerd/builds/monan-jedi-mpas/share/MPAS/core_init_atmosphere
+  atmosphere_share: /p/projetos/monan_das/joao.gerd/builds/monan-jedi-mpas/share/MPAS/core_atmosphere
+
+mesh:
+  name: x1.10242
+  grid: /p/projetos/monan_das/joao.gerd/projects/mpas_meshes/quasi_uniform/x1.10242_240km/mesh/x1.10242.grid.nc
+  graph: /p/projetos/monan_das/joao.gerd/projects/mpas_meshes/quasi_uniform/x1.10242_240km/graph/x1.10242.graph.info
+  partitions_dir: /p/projetos/monan_das/joao.gerd/projects/mpas_meshes/quasi_uniform/x1.10242_240km/partitions
+  nproc: 128
+  nvertlevels: 55
+
+static:
+  invariant: /p/projetos/monan_das/joao.gerd/external-inputs/mpasjedi_tutorial202509NCAR/MPAS_namelist_stream_physics_files/x1.10242.invariant.nc
+  tutorial_physics_files: /p/projetos/monan_das/joao.gerd/external-inputs/mpasjedi_tutorial202509NCAR/MPAS_namelist_stream_physics_files
+  geovars: /p/projetos/monan_das/joao.gerd/projects/MONAN-JEDI/mpas-jedi/test/testinput/namelists/geovars.yaml
+  keptvars: /p/projetos/monan_das/joao.gerd/projects/MONAN-JEDI/mpas-jedi/test/testinput/namelists/keptvars.yaml
+
+model:
+  init:
+    run_directory: mpas_init/{mesh_name}/{init_time}_invariant_np{nproc}
+    output_filename: "{mesh_name}.init.{safe_time}.nc"
+    input_grid_filename: "{mesh_name}.grid.nc"
+    namelist:
+      config_init_case: "7"
+      config_met_prefix: "'FILE'"
+      config_sfc_prefix: "'FILE'"
+      config_static_interp: ".false."
+      config_native_gwd_static: ".false."
+      config_native_gwd_gsl_static: ".false."
+      config_vertical_grid: ".true."
+      config_met_interp: ".true."
+    streams:
+      replace_clobber_mode: never_modify
+      output_clobber_mode: overwrite
+    validation:
+      log_success_tokens:
+        - "Critical error messages =            0"
+        - "Error messages =                     0"
+  forecast:
+    run_directory: runs/forecast_{mesh_name}_{safe_time}_f{lead_hours:03d}_dt{dt}_np{nproc}
+    da_state_filename: mpasout.$Y-$M-$D_$h.$m.$s.nc
+    restart_filename: restart.$Y-$M-$D_$h.$m.$s.nc
+    template:
+      namelist: namelist.atmosphere_240km
+      streams: streams.atmosphere_240km
+      fallback_namelist: namelist.atmosphere
+      fallback_streams: streams.atmosphere
+      stream_list_glob: stream_list.atmosphere.*
+    namelist:
+      config_do_restart: ".false."
+      config_sst_update: ".false."
+      config_sstdiurn_update: ".false."
+      config_deepsoiltemp_update: ".false."
+      config_do_DAcycling: ".true."
+      config_jedi_da: ".true."
+    streams:
+      invariant_stream: invariant
+      input_stream: input
+      da_state_stream: da_state
+      restart_stream: restart
+      da_state_packages: jedi_da
+      da_state_precision: single
+      da_state_io_type: pnetcdf,cdf5
+      clobber_mode: overwrite
+      disable_output_streams: [output, diagnostics]
+    da_state_required_variables:
+      - uReconstructZonal
+      - uReconstructMeridional
+      - theta
+      - pressure_p
+      - pressure_base
+      - qv
+      - surface_pressure
+      - qc
+      - qr
+      - qi
+      - qs
+      - qg
+
+bmatrix:
+  configuration: bmatrix-x1.10242-jedi4.yaml
+
+wps:
+  root: /p/projetos/monan_das/joao.gerd/data/mpas-bmatrix-global/external/WPS/WPS-4.6.0
+  ungrib_exe: /p/projetos/monan_das/joao.gerd/data/mpas-bmatrix-global/external/WPS/WPS-4.6.0/ungrib.exe
+  link_grib: /p/projetos/monan_das/joao.gerd/data/mpas-bmatrix-global/external/WPS/WPS-4.6.0/link_grib.csh
+  vtable_gfs: /p/projetos/monan_das/joao.gerd/data/mpas-bmatrix-global/external/WPS/WPS-4.6.0/ungrib/Variable_Tables/Vtable.GFS
+
+pbs:
+  queue: pesqmini
+  queues:
+    forecast: pesqmidi
+    bmatrix: pesqmidi
+  nproc: 128
+  walltime:
+    init: "00:10:00"
+    forecast:
+      f024: "01:00:00"
+      f048: "02:00:00"
+      default: "02:00:00"
+    bmatrix: "02:00:00"
+  walltime_short: "00:10:00"
+  walltime_long: "02:00:00"
+
+runtime:
+  config_dt: 60
+  output_interval: "24:00:00"
