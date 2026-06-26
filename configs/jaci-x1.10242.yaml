@@ -7,14 +7,16 @@ project:
 environment:
   loader: scripts/load_jaci_env.sh
 
-# Instalação MPAS padrão. O workflow resolve automaticamente:
-#   bin/mpas_init_atmosphere
-#   bin/mpas_atmosphere
-#   share/MPAS/core_init_atmosphere
-#   share/MPAS/core_atmosphere
-# Caminhos absolutos em chaves individuais são overrides explícitos.
+# Instalação MPAS.
+# Os executáveis declarados somente pelo nome são procurados em <root>/bin/.
+# Recursos podem ser declarados como caminhos relativos a <root>/.
+# Para componentes fora da instalação, informe o caminho absoluto naquela chave.
 install:
   root: /p/projetos/monan_das/joao.gerd/builds/monan-jedi-mpas
+  mpas_init: mpas_init_atmosphere
+  mpas_atmosphere: mpas_atmosphere
+  init_share: share/MPAS/core_init_atmosphere
+  atmosphere_share: share/MPAS/core_atmosphere
 
 mesh:
   name: x1.10242
