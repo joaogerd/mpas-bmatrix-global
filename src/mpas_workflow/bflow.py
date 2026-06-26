@@ -7,6 +7,8 @@ workflow is a Python pipeline instead of a Python file that writes helper
 Python scripts and a master shell script.
 """
 
+from pathlib import Path
+
 from .bflow_core.cli import (
     add_common_range_args,
     all_command,
@@ -29,8 +31,21 @@ from .bflow_core.model import (
     iter_valid_times,
     parse_time,
 )
-from .bflow_core.runner import run_bflow_pipeline as run_workspace
+from .bflow_core.runner import run_bflow_pipeline
 from .bflow_core.workspace import link_pair_inputs, prepare_workspace, validate_pairs
+from .config import load_config
+
+
+def run_workspace(workspace: Path, clean_output: bool = False, skip_weights: bool = False, config=None) -> int:
+    """Run a prepared BFLOW workspace.
+
+    Kept for callers that imported ``mpas_workflow.bflow.run_workspace`` before
+    the refactor. New code should prefer ``bflow_core.runner.run_bflow_pipeline``.
+    """
+    cfg = config if config is not None else load_config(DEFAULT_CONFIG)
+    run_bflow_pipeline(cfg, Path(workspace), clean_output=clean_output, skip_weights=skip_weights)
+    return 0
+
 
 __all__ = [
     "DEFAULT_CONFIG",
