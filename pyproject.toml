@@ -33,12 +33,15 @@ mpaswf = "mpas_workflow.cli:main"
 mpaswf-cycle-range = "mpas_workflow.cycle_range:main"
 mpasbm = "mpas_workflow.bmatrix:main"
 mpasbflow = "mpas_workflow.bflow_configured:main"
+mpasbflow-jedi4 = "mpas_workflow.bflow_jedi4:main"
 mpasbflow-legacy = "mpas_workflow.bflow:main"
 mpasbcov = "mpas_workflow.bcov_bflow_configured:main"
+mpasbcov-jedi4 = "mpas_workflow.bcov_jedi4:main"
 mpasbcov-contract = "mpas_workflow.bcov_configured:main"
 mpasbcov-legacy = "mpas_workflow.bcov:main"
 mpasbcov-pipeline = "mpas_workflow.bcov_pipeline:main"
 mpasdirac-summary = "mpas_workflow.dirac_summary:main"
+mpasvbal-inspect = "mpas_workflow.vbal_inspect:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

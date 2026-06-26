@@ -1,0 +1,83 @@
+# Matriz B canônica para JEDI 4
+
+Este documento registra a migração da matriz B global MPAS para a convenção usada pelo MPAS-JEDI 4.
+
+## Objetivo
+
+A matriz B nova deve deixar de depender de `alias` no YAML do JEDI. Para isso, os arquivos `FULL` e `PTB` gerados pelo BFLOW devem conter diretamente os nomes canônicos usados pelo MPAS-JEDI/SABER.
+
+## Variáveis de controle canônicas
+
+O contrato `configs/bmatrix-x1.10242-jedi4.yaml` usa:
+
+```text
+air_horizontal_streamfunction
+air_horizontal_velocity_potential
+air_temperature
+water_vapor_mixing_ratio_wrt_moist_air
+air_pressure_at_surface
+```
+
+Os nomes físicos antigos não devem aparecer como variáveis de controle em PTBs novos:
+
+```text
+stream_function
+velocity_potential
+temperature
+spechum
+surface_pressure
+```
+
+## Validação local
+
+Depois de instalar o repositório em modo editável, valide o contrato:
+
+```bash
+python -m pip install -e .
+python scripts/validate_jedi4_contract.py configs/bmatrix-x1.10242-jedi4.yaml
+```
+
+Depois de renderizar um workspace BCOV com o contrato JEDI-4, valide que os YAMLs renderizados não têm `alias:`:
+
+```bash
+python scripts/check_no_jedi_alias.py <workspace-bcov>
+```
+
+Esse comando deve passar antes de VBAL, HDIAG, NICAS, SO e DIRAC serem considerados JEDI-4 canônicos.
+
+## Execução JEDI-4
+
+Use o novo entry point para os estágios de covariância:
+
+```bash
+mpasbcov-jedi4 --help
+```
+
+O comando reutiliza o workflow configurado, mas não escreve `alias:` quando `code == file` para todos os controles do contrato.
+
+## Validação no JACI
+
+A sequência mínima é:
+
+```bash
+mpasbflow all --config <config-jedi4-local.yaml>
+mpasbcov-jedi4 vbal-prepare --config <config-jedi4-local.yaml>
+```
+
+Durante esta branch, a configuração de plataforma ainda aponta para o contrato padrão. Para testar o contrato JEDI-4 sem alterar o arquivo público, use uma cópia local de `configs/jaci-x1.10242.yaml` com:
+
+```yaml
+bmatrix:
+  configuration: bmatrix-x1.10242-jedi4.yaml
+```
+
+Depois de executar o job VBAL, inspecione os produtos NetCDF:
+
+```bash
+mpasvbal-inspect <workspace-vbal>/VBAL
+mpasvbal-inspect <workspace-vbal>/VBAL --require-unbalanced
+```
+
+O primeiro comando lista grupos e variáveis. O segundo retorna erro se nenhum grupo ou variável contiver `unbalanced`; ele é a barreira para não seguir a HDIAG/NICAS com um VBAL incompleto.
+
+Não alterar a direção de `balanced_variable`/`unbalanced_variable` antes de confrontar o resultado desse inspector com o YAML renderizado `run_vbal.yaml` e os logs do SABER.

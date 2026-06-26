@@ -1,0 +1,260 @@
+# Contrato científico JEDI-4 para a matriz B MPAS.
+# Todos os arquivos BFLOW/PTB devem usar os nomes canônicos abaixo.
+# Este contrato não usa alias code<->file.
+
+schema_version: 1
+
+controls:
+  - code: air_horizontal_streamfunction
+    file: air_horizontal_streamfunction
+    dimensions: 3d
+  - code: air_horizontal_velocity_potential
+    file: air_horizontal_velocity_potential
+    dimensions: 3d
+  - code: air_temperature
+    file: air_temperature
+    dimensions: 3d
+  - code: water_vapor_mixing_ratio_wrt_moist_air
+    file: water_vapor_mixing_ratio_wrt_moist_air
+    dimensions: 3d
+  - code: air_pressure_at_surface
+    file: air_pressure_at_surface
+    dimensions: 2d
+
+vbal:
+  files_prefix: mpas
+  group_variable_order:
+    - air_horizontal_streamfunction
+    - water_vapor_mixing_ratio_wrt_moist_air
+    - air_horizontal_velocity_potential
+    - air_temperature
+    - air_pressure_at_surface
+  drivers:
+    write_local_sampling: true
+    write_global_sampling: true
+    compute_vertical_covariance: true
+    compute_vertical_balance: true
+    write_vertical_balance: true
+  sampling:
+    computation grid size: 12000
+    diagnostic grid size: 200
+    reduced levels: 55
+    averaging latitude width: 10.0
+  # Mantido igual ao contrato em uso: a direção das relações deve ser validada
+  # pelos grupos VBAL produzidos antes de alterar a hipótese científica.
+  relations:
+    - balanced_variable: air_horizontal_velocity_potential
+      unbalanced_variable: air_horizontal_streamfunction
+      diagonal_regression: true
+    - balanced_variable: air_temperature
+      unbalanced_variable: air_horizontal_streamfunction
+    - balanced_variable: air_pressure_at_surface
+      unbalanced_variable: air_horizontal_streamfunction
+  expected_unbalanced_variables:
+    - air_horizontal_velocity_potential
+    - air_temperature
+    - air_pressure_at_surface
+  pseudo_inverse: true
+  dominant_mode: 20
+
+hdiag:
+  min_members: 4
+  files_prefix: mpas
+  bump_vunit: avgheight
+  iterative_ensemble_loading: true
+  drivers:
+    compute covariance: true
+    compute correlation: true
+    multivariate strategy: univariate
+    write global sampling: true
+    compute variance: true
+    compute moments: true
+    write diagnostics: true
+  sampling:
+    computation grid size: 12000
+    diagnostic grid size: 1000
+    distance classes: 10
+    distance class width: 3000000.0
+    reduced levels: 10
+    local diagnostic: true
+    averaging length-scale: 3000000.0
+  variance:
+    objective_filtering: true
+    filtering_iterations: 1
+    initial_length_scales:
+      - variables:
+          - air_horizontal_streamfunction
+          - air_horizontal_velocity_potential
+          - air_temperature
+          - water_vapor_mixing_ratio_wrt_moist_air
+          - air_pressure_at_surface
+        value: 3000000.0
+  fit:
+    horizontal filtering length-scale: 3000000.0
+
+nicas:
+  files_prefix: mpas
+  bump_vunit: avgheight
+  dirac_level_from_top: 20
+  drivers:
+    multivariate strategy: univariate
+    compute nicas: true
+    write local nicas: true
+    write global nicas: true
+    write nicas grids: true
+    internal dirac test: true
+  nicas:
+    resolution: 8
+    max horizontal grid size: 15000
+  dirac_points:
+    - longitude: -45.0
+      latitude: 0.0
+      variable: air_temperature
+
+dirac:
+  ndir: 1
+  index: 10
+  variable: air_temperature
+  latitudes: [30.31011691]
+  longitudes: [130.11182691]
+
+single_observation:
+  window_hours_before_analysis: 3
+  window_hours: 6
+  minimizer: DRPCG
+  ninner: 10
+  gradient_norm_reduction: 1e-3
+  analysis_variables:
+    - eastward_wind
+    - northward_wind
+    - air_temperature
+    - water_vapor_mixing_ratio_wrt_moist_air
+    - air_pressure_at_surface
+  background_variables:
+    - air_temperature
+    - air_pressure
+    - air_pressure_at_surface
+    - eastward_wind
+    - northward_wind
+    - theta
+    - rho
+    - u
+    - qv
+    - pressure
+    - pressure_p
+  observations:
+    temperature:
+      name: SO_T
+      simulated_variable: airTemperature
+      latitude: 30.3061
+      longitude: 130.085
+      pressure: 78775.95
+      error: 0.8
+      value: 284.5912
+      output_file: obsout_SO_T.h5
+  variants:
+    default: [temperature]
+
+bflow:
+  nmc:
+    older_lead_hours: 48
+    newer_lead_hours: 24
+    older_label: f48
+    newer_label: f24
+  products:
+    template: template_PTB.nc
+    older_full: FULL_f48.nc
+    newer_full: FULL_f24.nc
+    perturbation: PTB_f48mf24.nc
+  regridding:
+    module_load: module load ncl netcdf 2>/dev/null || module load ncl 2>/dev/null || true
+    ncl_module_load: module load ncl 2>/dev/null || true
+    mpas_grid_file: MPAS_{mesh_name}.nc
+    scrip_grid_file: SCRIP_latlon_1p0.nc
+    esmf_grid_file: ESMF_MPAS_{mesh_name}.nc
+    scrip_resolution: 1.0deg
+    interpolation_method: bilinear
+    weight_latlon_to_mpas: latlon_1p0_to_MPAS_{mesh_name}_bilinear.nc
+    weight_mpas_to_latlon: MPAS_{mesh_name}_to_latlon_1p0_bilinear.nc
+    lower_left: [-89.5, -179.5]
+    upper_right: [89.5, 179.5]
+  wind_transform:
+    zonal_file_variable: uReconstructZonal
+    meridional_file_variable: uReconstructMeridional
+    template_file_variable: theta
+    radius_numerator_m: 6371229.0
+    radius_denominator_m: 6371220.0
+    outputs:
+      stream_function:
+        output_control: air_horizontal_streamfunction
+        long_name: stream function
+        units: m^2 s^(-2)
+        scale: 1.0
+      velocity_potential:
+        output_control: air_horizontal_velocity_potential
+        long_name: velocity potential
+        units: m^2 s^(-2)
+        scale: -1.0
+  copy_variables:
+    - source: surface_pressure
+      output: air_pressure_at_surface
+    - uReconstructZonal
+    - uReconstructMeridional
+    - qv
+    - pressure_p
+    - pressure_base
+  derived_variables:
+    - output_file: pressure
+      operation: sum
+      inputs: [pressure_p, pressure_base]
+      template_file: pressure_p
+      attributes:
+        long_name: pressure
+        units: Pa
+    - output_control: air_temperature
+      operation: potential_temperature_to_temperature
+      theta_file: theta
+      pressure_file: pressure
+      reference_pressure_pa: 100000.0
+      exponent: 0.2857142857142857
+      template_file: theta
+      attributes:
+        long_name: air temperature
+        units: K
+    - output_control: water_vapor_mixing_ratio_wrt_moist_air
+      operation: mixing_ratio_to_specific_humidity
+      mixing_ratio_file: qv
+      template_file: qv
+      attributes:
+        long_name: specific humidity
+        units: kg kg-1
+  validation:
+    full_required:
+      - air_horizontal_streamfunction
+      - air_horizontal_velocity_potential
+      - air_temperature
+      - water_vapor_mixing_ratio_wrt_moist_air
+      - air_pressure_at_surface
+    ptb_required:
+      - air_horizontal_streamfunction
+      - air_horizontal_velocity_potential
+      - air_temperature
+      - water_vapor_mixing_ratio_wrt_moist_air
+      - air_pressure_at_surface
+    forbidden_ptb_variables:
+      - stream_function
+      - velocity_potential
+      - temperature
+      - spechum
+      - surface_pressure
+    dimension_checks:
+      - file: air_horizontal_streamfunction
+        dimensions: [Time, nCells, nVertLevels]
+      - file: air_horizontal_velocity_potential
+        dimensions: [Time, nCells, nVertLevels]
+      - file: air_temperature
+        dimensions: [Time, nCells, nVertLevels]
+      - file: water_vapor_mixing_ratio_wrt_moist_air
+        dimensions: [Time, nCells, nVertLevels]
+      - file: air_pressure_at_surface
+        dimensions: [Time, nCells]
