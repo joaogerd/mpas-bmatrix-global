@@ -167,6 +167,17 @@ def _expected_output_paths(runtime_dir: Path, values: Sequence[str]) -> list[str
     return [str(runtime_dir / _as_relative_path(value, "runtime.expected_outputs")) for value in values]
 
 
+def _resolved_install_manifest(context: Mapping[str, Any]) -> dict[str, Any]:
+    """Expose normalized installation paths independently of template aliases."""
+    return {
+        "root": context.get("mpas_install_root"),
+        "mpas_init": context.get("mpas_init_executable"),
+        "mpas_atmosphere": context.get("mpas_atmosphere_executable"),
+        "init_share": context.get("init_share"),
+        "atmosphere_share": context.get("atmosphere_share"),
+    }
+
+
 def prepare_stage(
     case: CaseConfig,
     stage_name: str,
@@ -224,6 +235,7 @@ def prepare_stage(
             "stage": stage_name,
             "dry_run": False,
             "context": context,
+            "resolved_install": _resolved_install_manifest(context),
             "runtime_dir": str(runtime_dir),
             "executable": str(executable_link.destination),
             "required_directories": [str(path) for path in required_directories],
