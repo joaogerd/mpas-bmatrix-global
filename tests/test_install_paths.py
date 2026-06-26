@@ -13,6 +13,22 @@ def test_root_supplies_default_layout():
     assert paths["atmosphere_share"] == "/opt/mpas/share/MPAS/core_atmosphere"
 
 
+def test_explicit_names_use_bin_and_relative_shares_use_root():
+    paths = resolve_install_paths(
+        {
+            "root": "/opt/mpas",
+            "mpas_init": "custom_init",
+            "mpas_atmosphere": "custom_atmosphere",
+            "init_share": "share/MPAS/custom_init",
+            "atmosphere_share": "share/MPAS/custom_atmosphere",
+        }
+    )
+    assert paths["mpas_init"] == "/opt/mpas/bin/custom_init"
+    assert paths["mpas_atmosphere"] == "/opt/mpas/bin/custom_atmosphere"
+    assert paths["init_share"] == "/opt/mpas/share/MPAS/custom_init"
+    assert paths["atmosphere_share"] == "/opt/mpas/share/MPAS/custom_atmosphere"
+
+
 def test_absolute_override_ignores_root():
     paths = resolve_install_paths(
         {"root": "/opt/mpas", "mpas_atmosphere": "/custom/bin/mpas_atmosphere"}
