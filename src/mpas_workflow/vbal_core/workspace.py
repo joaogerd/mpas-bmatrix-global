@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..bcov import vbal_workspace
+from .model import vbal_workspace
 
 
 def workspace(config, bflow_workspace: str | Path) -> Path:
