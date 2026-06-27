@@ -19,10 +19,12 @@ dependencies = [
   "netCDF4>=1.6",
   "cftime>=1.6",
   "xarray>=2024.1",
-  "windspharm>=2.0",
 ]
 
 [project.optional-dependencies]
+bflow = [
+  "windspharm>=2.0",
+]
 dev = [
   "pytest>=8",
   "ruff>=0.5",
