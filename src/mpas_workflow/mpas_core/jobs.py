@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-from ..forecast import submit_forecast
+from ..shell import qsub, require_file
+from .model import forecast_run_dir
 
 
 def run_job(config, init_time: str, lead_hours: int, dt=None):
-    return submit_forecast(config, init_time, lead_hours, dt=dt)
+    dt = int(dt or config["runtime"]["config_dt"])
+    run_dir = forecast_run_dir(config, init_time, lead_hours, dt)
+    require_file(run_dir / "run_mpas_forecast.pbs", "PBS de forecast")
+    return qsub("run_mpas_forecast.pbs", run_dir)
