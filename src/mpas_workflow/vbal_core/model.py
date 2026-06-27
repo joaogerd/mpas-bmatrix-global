@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -64,3 +65,11 @@ def vbal_workspace(config, bflow_workspace: str | Path) -> Path:
 def toolbox_exe(config) -> Path:
     path = Path(config["install"]["root"]) / "bin" / "mpasjedi_error_covariance_toolbox.x"
     return require_file(path, "mpasjedi_error_covariance_toolbox.x")
+
+
+def vbal_date(vbal_root: str | Path) -> str:
+    text = require_file(Path(vbal_root) / "VBAL" / "run_vbal.yaml", "run_vbal.yaml").read_text()
+    match = re.search(r"(?m)^\s*date:\s*&date\s+'([^']+)'", text)
+    if not match:
+        raise SystemExit("ERRO: data principal não encontrada no run_vbal.yaml")
+    return match.group(1)
