@@ -28,8 +28,7 @@ dependencies:
   - pytest
   - ruff
 
-  # Instala o pacote local em modo editável sem deixar o pip tentar resolver
-  # dependências científicas binárias que já foram resolvidas pelo conda.
+  # Instala o pacote local em modo editável. As dependências científicas
+  # compiladas acima são resolvidas pelo conda, não pelo pip.
   - pip:
-      - --no-deps
       - -e .
