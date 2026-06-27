@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..bcov import hdiag_workspace
+from .model import hdiag_workspace
 
 
 def workspace(config, vbal_workspace: str | Path) -> Path:
