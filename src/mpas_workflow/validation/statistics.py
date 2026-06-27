@@ -16,6 +16,7 @@ class VariableStats:
     bias: float | None = None
     mae: float | None = None
     rmse: float | None = None
+    rel_rmse: float | None = None
     max_abs: float | None = None
     std_old: float | None = None
     std_new: float | None = None
@@ -40,6 +41,12 @@ def _safe_corr(old: np.ndarray, new: np.ndarray) -> float | None:
             return 1.0
         return None
     return float(np.corrcoef(old, new)[0, 1])
+
+
+def _relative_rmse(rmse: float, std_old: float) -> float | None:
+    if std_old == 0.0:
+        return 0.0 if rmse == 0.0 else None
+    return float(rmse / std_old)
 
 
 def compare_variable(name: str, old: xr.Dataset, new: xr.Dataset) -> VariableStats:
@@ -79,6 +86,8 @@ def compare_variable(name: str, old: xr.Dataset, new: xr.Dataset) -> VariableSta
         )
 
     diff = new_values - old_values
+    rmse = float(np.sqrt(np.mean(diff * diff)))
+    std_old = float(np.std(old_values))
     return VariableStats(
         name=name,
         status="ok",
@@ -87,9 +96,10 @@ def compare_variable(name: str, old: xr.Dataset, new: xr.Dataset) -> VariableSta
         count=int(diff.size),
         bias=float(np.mean(diff)),
         mae=float(np.mean(np.abs(diff))),
-        rmse=float(np.sqrt(np.mean(diff * diff))),
+        rmse=rmse,
+        rel_rmse=_relative_rmse(rmse, std_old),
         max_abs=float(np.max(np.abs(diff))),
-        std_old=float(np.std(old_values)),
+        std_old=std_old,
         std_new=float(np.std(new_values)),
         corr=_safe_corr(old_values, new_values),
     )
