@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..bcov import so_workspace
+from .model import so_workspace
 
 
 def workspace(config, nicas_workspace: str | Path) -> Path:
