@@ -41,6 +41,7 @@ mpasbcov-contract = "mpas_workflow.bcov_configured:main"
 mpasbcov-legacy = "mpas_workflow.bcov:main"
 mpasbcov-pipeline = "mpas_workflow.bcov_pipeline:main"
 mpasdirac-summary = "mpas_workflow.dirac_summary:main"
+mpasverify = "mpas_workflow.verify:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
