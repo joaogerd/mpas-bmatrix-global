@@ -28,8 +28,69 @@ static:
   geovars: /p/projetos/monan_das/joao.gerd/projects/MONAN-JEDI/mpas-jedi/test/testinput/namelists/geovars.yaml
   keptvars: /p/projetos/monan_das/joao.gerd/projects/MONAN-JEDI/mpas-jedi/test/testinput/namelists/keptvars.yaml
 
-# Parâmetros científicos, variáveis de controle e convenções code<->file
-# ficam isolados no arquivo abaixo. Assim, mudanças na B não exigem editar Python.
+# Runtime, streams and namelist behavior for MPAS init and forecast.
+model:
+  init:
+    run_directory: mpas_init/{mesh_name}/{init_time}_invariant_np{nproc}
+    output_filename: "{mesh_name}.init.{safe_time}.nc"
+    input_grid_filename: "{mesh_name}.grid.nc"
+    namelist:
+      config_init_case: "7"
+      config_met_prefix: "'FILE'"
+      config_sfc_prefix: "'FILE'"
+      config_static_interp: ".false."
+      config_native_gwd_static: ".false."
+      config_native_gwd_gsl_static: ".false."
+      config_vertical_grid: ".true."
+      config_met_interp: ".true."
+    streams:
+      replace_clobber_mode: never_modify
+      output_clobber_mode: overwrite
+    validation:
+      log_success_tokens:
+        - "Critical error messages =            0"
+        - "Error messages =                     0"
+  forecast:
+    run_directory: runs/forecast_{mesh_name}_{safe_time}_f{lead_hours:03d}_dt{dt}_np{nproc}
+    da_state_filename: mpasout.$Y-$M-$D_$h.$m.$s.nc
+    restart_filename: restart.$Y-$M-$D_$h.$m.$s.nc
+    template:
+      namelist: namelist.atmosphere_240km
+      streams: streams.atmosphere_240km
+      fallback_namelist: namelist.atmosphere
+      fallback_streams: streams.atmosphere
+      stream_list_glob: stream_list.atmosphere.*
+    namelist:
+      config_do_restart: ".false."
+      config_sst_update: ".false."
+      config_sstdiurn_update: ".false."
+      config_deepsoiltemp_update: ".false."
+      config_do_DAcycling: ".true."
+      config_jedi_da: ".true."
+    streams:
+      invariant_stream: invariant
+      input_stream: input
+      da_state_stream: da_state
+      restart_stream: restart
+      da_state_packages: jedi_da
+      da_state_precision: single
+      da_state_io_type: pnetcdf,cdf5
+      clobber_mode: overwrite
+      disable_output_streams: [output, diagnostics]
+    da_state_required_variables:
+      - uReconstructZonal
+      - uReconstructMeridional
+      - theta
+      - pressure_p
+      - pressure_base
+      - qv
+      - surface_pressure
+      - qc
+      - qr
+      - qi
+      - qs
+      - qg
+
 bmatrix:
   configuration: bmatrix-x1.10242.yaml
 

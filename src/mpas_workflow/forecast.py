@@ -1,71 +1,83 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
 import re
-from datetime import datetime, timedelta
 from xml.etree import ElementTree as ET
 
 from .config import safe_time
+from .model_config import model_config, render
 from .mpas_init import init_file
 from .pbs import mpas_forecast_pbs
-from .shell import require_file, symlink_force, write_text, qsub
+from .shell import qsub, require_file, symlink_force, write_text
 
 
-DA_STATE_REQUIRED_VARIABLES = [
-    "uReconstructZonal",
-    "uReconstructMeridional",
-    "theta",
-    "pressure_p",
-    "pressure_base",
-    "qv",
-    "surface_pressure",
-    "qc",
-    "qr",
-    "qi",
-    "qs",
-    "qg",
-]
+TIME_FORMAT = "%Y-%m-%d_%H:%M:%S"
 
 
-def parse_time(t):
-    return datetime.strptime(t, "%Y-%m-%d_%H:%M:%S")
+def parse_time(value: str) -> datetime:
+    return datetime.strptime(value, TIME_FORMAT)
 
 
-def fmt_file_time(dt):
-    return dt.strftime("%Y-%m-%d_%H.%M.%S")
+def fmt_file_time(value: datetime) -> str:
+    return value.strftime("%Y-%m-%d_%H.%M.%S")
+
+
+def _mpas_time_template(template: str, value: datetime) -> str:
+    replacements = {
+        "$Y": value.strftime("%Y"),
+        "$M": value.strftime("%m"),
+        "$D": value.strftime("%d"),
+        "$h": value.strftime("%H"),
+        "$m": value.strftime("%M"),
+        "$s": value.strftime("%S"),
+    }
+    for token, replacement in replacements.items():
+        template = template.replace(token, replacement)
+    return template
+
+
+def _forecast_settings(config):
+    return model_config(config)["forecast"]
 
 
 def forecast_run_dir(config, init_time, lead_hours, dt):
     mesh = config["mesh"]["name"]
     nproc = int(config["mesh"].get("nproc", 64))
-    return Path(config["project"]["work_root"]) / "runs" / f"forecast_{mesh}_{safe_time(init_time)}_f{lead_hours:03d}_dt{dt}_np{nproc}"
+    pattern = _forecast_settings(config)["run_directory"]
+    relative = render(
+        pattern,
+        mesh_name=mesh,
+        init_time=init_time,
+        safe_time=safe_time(init_time),
+        lead_hours=int(lead_hours),
+        dt=int(dt),
+        nproc=nproc,
+    )
+    return Path(config["project"]["work_root"]) / relative
 
 
 def restart_file(config, init_time, lead_hours, dt):
     valid = parse_time(init_time) + timedelta(hours=lead_hours)
-    return forecast_run_dir(config, init_time, lead_hours, dt) / f"restart.{fmt_file_time(valid)}.nc"
+    filename = _mpas_time_template(_forecast_settings(config)["restart_filename"], valid)
+    return forecast_run_dir(config, init_time, lead_hours, dt) / filename
 
 
 def bflow_file(config, init_time, lead_hours, dt):
-    """Return the Bflow-ready MPAS-JEDI da_state file.
-
-    The historical helper name is kept for CLI compatibility. The actual file is
-    produced by the MPAS-JEDI da_state stream as mpasout.$Y-$M-$D_$h.$m.$s.nc.
-    """
+    """Return the configured MPAS-JEDI DA-state output for a forecast."""
     valid = parse_time(init_time) + timedelta(hours=lead_hours)
-    return forecast_run_dir(config, init_time, lead_hours, dt) / f"mpasout.{fmt_file_time(valid)}.nc"
+    filename = _mpas_time_template(_forecast_settings(config)["da_state_filename"], valid)
+    return forecast_run_dir(config, init_time, lead_hours, dt) / filename
 
 
 def patch_namelist(text, replacements):
     missing = []
     for key, value in replacements.items():
         pattern = rf"(^\s*{re.escape(key)}\s*=\s*)[^,\n]*(.*)$"
-        repl = rf"\g<1>{value}\g<2>"
-        new_text, count = re.subn(pattern, repl, text, flags=re.MULTILINE)
+        replacement = rf"\g<1>{value}\g<2>"
+        text, count = re.subn(pattern, replacement, text, flags=re.MULTILINE)
         if count == 0:
             missing.append(key)
-        text = new_text
-
     if missing:
         raise SystemExit(
             "ERRO: opções esperadas não foram encontradas no namelist.atmosphere: "
@@ -103,11 +115,11 @@ def _tutorial_physics_dir(config) -> Path:
 
 
 def _copy_tutorial_stream_lists(config, run_dir: Path):
+    template = _forecast_settings(config)["template"]
     tutorial_dir = _tutorial_physics_dir(config)
     if not tutorial_dir.exists():
         return
-
-    for path in tutorial_dir.glob("stream_list.atmosphere.*"):
+    for path in tutorial_dir.glob(template["stream_list_glob"]):
         if path.is_file():
             symlink_force(path, run_dir / path.name)
 
@@ -119,72 +131,82 @@ def _find_stream(root: ET.Element, name: str) -> ET.Element | None:
     return None
 
 
-def _ensure_restart_stream(root: ET.Element, output_interval: str):
-    restart = _find_stream(root, "restart")
-    if restart is None:
-        restart = ET.Element("stream")
+def _ensure_output_stream(
+    root: ET.Element,
+    name: str,
+    filename_template: str,
+    output_interval: str,
+    clobber_mode: str,
+) -> ET.Element:
+    stream = _find_stream(root, name)
+    if stream is None:
+        stream = ET.Element("stream")
         insert_at = 0
-        for i, child in enumerate(list(root)):
+        for index, child in enumerate(list(root)):
             if child.tag == "immutable_stream":
-                insert_at = i + 1
-        root.insert(insert_at, restart)
-
-    restart.set("name", "restart")
-    restart.set("type", "output")
-    restart.set("filename_template", "restart.$Y-$M-$D_$h.$m.$s.nc")
-    restart.set("filename_interval", "output_interval")
-    restart.set("output_interval", output_interval)
-    restart.set("clobber_mode", "overwrite")
+                insert_at = index + 1
+        root.insert(insert_at, stream)
+    stream.set("name", name)
+    stream.set("type", "output")
+    stream.set("filename_template", filename_template)
+    stream.set("filename_interval", "output_interval")
+    stream.set("output_interval", output_interval)
+    stream.set("clobber_mode", clobber_mode)
+    return stream
 
 
 def _prepare_streams(config, run_dir: Path, output_interval: str):
+    settings = _forecast_settings(config)
+    template_cfg = settings["template"]
+    streams_cfg = settings["streams"]
     mesh = config["mesh"]
     share = Path(config["install"]["atmosphere_share"])
     tutorial_dir = _tutorial_physics_dir(config)
 
-    streams_template = tutorial_dir / "streams.atmosphere_240km"
-    if not streams_template.exists():
-        streams_template = share / "streams.atmosphere"
-    require_file(streams_template, "streams.atmosphere template")
+    template = tutorial_dir / template_cfg["streams"]
+    if not template.exists():
+        template = share / template_cfg["fallback_streams"]
+    require_file(template, "streams.atmosphere template")
 
-    tree = ET.parse(streams_template)
+    tree = ET.parse(template)
     root = tree.getroot()
 
-    invariant = _find_stream(root, "invariant")
+    invariant = _find_stream(root, streams_cfg["invariant_stream"])
     if invariant is None:
         invariant = ET.SubElement(root, "immutable_stream")
-        invariant.set("name", "invariant")
+        invariant.set("name", streams_cfg["invariant_stream"])
     invariant.set("type", "input")
     invariant.set("filename_template", f"{mesh['name']}.invariant.nc")
     invariant.set("input_interval", "initial_only")
 
-    input_stream = _find_stream(root, "input")
+    input_stream = _find_stream(root, streams_cfg["input_stream"])
     if input_stream is None:
         input_stream = ET.SubElement(root, "immutable_stream")
-        input_stream.set("name", "input")
+        input_stream.set("name", streams_cfg["input_stream"])
     input_stream.set("type", "input")
     input_stream.set("filename_template", "init.nc")
     input_stream.set("input_interval", "initial_only")
 
-    da_state = _find_stream(root, "da_state")
-    if da_state is None:
-        da_state = ET.SubElement(root, "immutable_stream")
-        da_state.set("name", "da_state")
-    da_state.set("type", "output")
-    da_state.set("precision", da_state.get("precision", "single"))
-    da_state.set("io_type", da_state.get("io_type", "pnetcdf,cdf5"))
-    da_state.set("filename_template", "mpasout.$Y-$M-$D_$h.$m.$s.nc")
-    da_state.set("packages", "jedi_da")
-    da_state.set("output_interval", output_interval)
-    da_state.set("filename_interval", "output_interval")
-    da_state.set("clobber_mode", "overwrite")
+    da_state = _ensure_output_stream(
+        root,
+        streams_cfg["da_state_stream"],
+        settings["da_state_filename"],
+        output_interval,
+        streams_cfg["clobber_mode"],
+    )
+    da_state.set("precision", da_state.get("precision", streams_cfg["da_state_precision"]))
+    da_state.set("io_type", da_state.get("io_type", streams_cfg["da_state_io_type"]))
+    da_state.set("packages", streams_cfg["da_state_packages"])
 
-    # Keep restart output for the existing NMC validation path. Bflow itself uses
-    # the MPAS-JEDI da_state/mpasout file.
-    _ensure_restart_stream(root, output_interval)
+    _ensure_output_stream(
+        root,
+        streams_cfg["restart_stream"],
+        settings["restart_filename"],
+        output_interval,
+        streams_cfg["clobber_mode"],
+    )
 
-    # The tutorial keeps ordinary history/diagnostics disabled for this workflow.
-    for stream_name in ["output", "diagnostics"]:
+    for stream_name in streams_cfg["disable_output_streams"]:
         stream = _find_stream(root, stream_name)
         if stream is not None:
             stream.set("type", "none")
@@ -194,6 +216,8 @@ def _prepare_streams(config, run_dir: Path, output_interval: str):
 
 
 def validate_forecast_setup(config, init_time, lead_hours, dt, output_interval):
+    settings = _forecast_settings(config)
+    streams_cfg = settings["streams"]
     run_dir = forecast_run_dir(config, init_time, lead_hours, dt)
     mesh = config["mesh"]
     graph = Path(mesh["graph"])
@@ -224,17 +248,16 @@ def validate_forecast_setup(config, init_time, lead_hours, dt, output_interval):
     streams = (run_dir / "streams.atmosphere").read_text(errors="replace")
     pbs_text = (run_dir / "run_mpas_forecast.pbs").read_text(errors="replace")
 
-    run_duration = f"{lead_hours // 24}_{lead_hours % 24:02d}:00:00"
-    dt_value = f"{float(dt):.1f}"
+    duration = f"{lead_hours // 24}_{lead_hours % 24:02d}:00:00"
     required_namelist_tokens = [
-        f"config_dt = {dt_value}",
+        f"config_dt = {float(dt):.1f}",
         f"config_start_time = '{init_time}'",
-        f"config_run_duration = '{run_duration}'",
-        "config_do_restart = .false.",
-        "config_do_DAcycling = .true.",
-        "config_jedi_da = .true.",
+        f"config_run_duration = '{duration}'",
         f"config_block_decomp_file_prefix = '{graph.name}.part.'",
     ]
+    required_namelist_tokens.extend(
+        f"{key} = {value}" for key, value in settings["namelist"].items()
+    )
     for token in required_namelist_tokens:
         if token not in namelist:
             raise SystemExit(f"ERRO: namelist.atmosphere não contém configuração esperada: {token}")
@@ -242,19 +265,18 @@ def validate_forecast_setup(config, init_time, lead_hours, dt, output_interval):
     required_stream_tokens = [
         f'filename_template="{mesh["name"]}.invariant.nc"',
         'filename_template="init.nc"',
-        'name="da_state"',
-        'filename_template="mpasout.$Y-$M-$D_$h.$m.$s.nc"',
-        'packages="jedi_da"',
+        f'name="{streams_cfg["da_state_stream"]}"',
+        f'filename_template="{settings["da_state_filename"]}"',
+        f'packages="{streams_cfg["da_state_packages"]}"',
         f'output_interval="{output_interval}"',
         'filename_interval="output_interval"',
-        'clobber_mode="overwrite"',
-        'name="restart"',
-        'filename_template="restart.$Y-$M-$D_$h.$m.$s.nc"',
+        f'clobber_mode="{streams_cfg["clobber_mode"]}"',
+        f'name="{streams_cfg["restart_stream"]}"',
+        f'filename_template="{settings["restart_filename"]}"',
     ]
     for token in required_stream_tokens:
         if token not in streams:
             raise SystemExit(f"ERRO: streams.atmosphere não contém configuração esperada: {token}")
-
     if "#PBS -l walltime=" not in pbs_text:
         raise SystemExit("ERRO: PBS de forecast não contém diretiva walltime.")
 
@@ -263,15 +285,17 @@ def validate_forecast_setup(config, init_time, lead_hours, dt, output_interval):
     print(f"  INIT_INPUT={run_dir / 'init.nc'}")
     print(f"  EXPECTED_RESTART={expected_restart}")
     print(f"  EXPECTED_DA_STATE={expected_da_state}")
-    print("  DA_STATE_REQUIRED_VARIABLES=" + ",".join(DA_STATE_REQUIRED_VARIABLES))
+    print("  DA_STATE_REQUIRED_VARIABLES=" + ",".join(settings["da_state_required_variables"]))
     for line in pbs_text.splitlines():
         if line.startswith("#PBS -q") or line.startswith("#PBS -l walltime") or line.startswith("#PBS -l select"):
             print(f"  PBS={line}")
 
 
 def prepare_forecast(config, init_time, lead_hours, dt=None, output_interval=None):
-    dt = int(dt or config["runtime"]["config_dt"])
-    output_interval = output_interval or config["runtime"]["output_interval"]
+    runtime = config["runtime"]
+    settings = _forecast_settings(config)
+    dt = int(dt or runtime["config_dt"])
+    output_interval = output_interval or runtime["output_interval"]
     run_dir = forecast_run_dir(config, init_time, lead_hours, dt)
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -290,7 +314,6 @@ def prepare_forecast(config, init_time, lead_hours, dt=None, output_interval=Non
     require_file(mesh["grid"], "mesh grid")
 
     clean_forecast_run_dir(run_dir)
-
     symlink_force(install["mpas_atmosphere"], run_dir / "mpas_atmosphere")
     symlink_force(init_file(config, init_time), run_dir / "init.nc")
     symlink_force(static["invariant"], run_dir / f"{mesh['name']}.invariant.nc")
@@ -299,34 +322,27 @@ def prepare_forecast(config, init_time, lead_hours, dt=None, output_interval=Non
     symlink_force(partition, run_dir / partition.name)
 
     share = Path(install["atmosphere_share"])
-    for f in share.iterdir():
-        if f.is_file() and f.name not in {"namelist.atmosphere", "streams.atmosphere"}:
-            symlink_force(f, run_dir / f.name)
-
+    for path in share.iterdir():
+        if path.is_file() and path.name not in {"namelist.atmosphere", "streams.atmosphere"}:
+            symlink_force(path, run_dir / path.name)
     _copy_tutorial_stream_lists(config, run_dir)
 
     tutorial_dir = _tutorial_physics_dir(config)
-    template = tutorial_dir / "namelist.atmosphere_240km"
-    if not template.exists():
-        template = share / "namelist.atmosphere"
-    require_file(template, "namelist.atmosphere template")
+    template_cfg = settings["template"]
+    namelist_template = tutorial_dir / template_cfg["namelist"]
+    if not namelist_template.exists():
+        namelist_template = share / template_cfg["fallback_namelist"]
+    require_file(namelist_template, "namelist.atmosphere template")
 
-    run_duration = f"{lead_hours // 24}_{lead_hours % 24:02d}:00:00"
-    dt_value = f"{float(dt):.1f}"
-    namelist = template.read_text()
-    namelist = patch_namelist(namelist, {
-        "config_dt": dt_value,
+    duration = f"{lead_hours // 24}_{lead_hours % 24:02d}:00:00"
+    replacements = {
+        "config_dt": f"{float(dt):.1f}",
         "config_start_time": f"'{init_time}'",
-        "config_run_duration": f"'{run_duration}'",
-        "config_do_restart": ".false.",
+        "config_run_duration": f"'{duration}'",
         "config_block_decomp_file_prefix": f"'{graph.name}.part.'",
-        "config_sst_update": ".false.",
-        "config_sstdiurn_update": ".false.",
-        "config_deepsoiltemp_update": ".false.",
-        "config_do_DAcycling": ".true.",
-        "config_jedi_da": ".true.",
-    })
-    write_text(run_dir / "namelist.atmosphere", namelist)
+    }
+    replacements.update(settings["namelist"])
+    write_text(run_dir / "namelist.atmosphere", patch_namelist(namelist_template.read_text(), replacements))
 
     _prepare_streams(config, run_dir, output_interval)
     write_text(run_dir / "run_mpas_forecast.pbs", mpas_forecast_pbs(config, run_dir, nproc, lead_hours=lead_hours))
