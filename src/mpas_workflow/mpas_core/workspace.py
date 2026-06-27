@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..forecast import bflow_file as _bflow_file
-from ..forecast import forecast_run_dir, restart_file as _restart_file
+from .model import bflow_file as _bflow_file
+from .model import forecast_run_dir, restart_file as _restart_file
 
 
 def workspace(config, init_time: str, lead_hours: int, dt: int) -> Path:
