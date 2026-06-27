@@ -11,6 +11,7 @@ COLUMNS = [
     ("bias", 12),
     ("mae", 12),
     ("rmse", 12),
+    ("rel_rmse", 12),
     ("max_abs", 12),
     ("corr", 12),
 ]
@@ -23,8 +24,9 @@ def render_table(stats: list[VariableStats]) -> str:
         f"{'Bias':>{COLUMNS[2][1]}} "
         f"{'MAE':>{COLUMNS[3][1]}} "
         f"{'RMSE':>{COLUMNS[4][1]}} "
-        f"{'MaxAbs':>{COLUMNS[5][1]}} "
-        f"{'Corr':>{COLUMNS[6][1]}}"
+        f"{'RelRMSE':>{COLUMNS[5][1]}} "
+        f"{'MaxAbs':>{COLUMNS[6][1]}} "
+        f"{'Corr':>{COLUMNS[7][1]}}"
     )
     sep = "-" * len(header)
     rows = [header, sep]
@@ -35,8 +37,9 @@ def render_table(stats: list[VariableStats]) -> str:
             f"{format_number(item.bias):>{COLUMNS[2][1]}} "
             f"{format_number(item.mae):>{COLUMNS[3][1]}} "
             f"{format_number(item.rmse):>{COLUMNS[4][1]}} "
-            f"{format_number(item.max_abs):>{COLUMNS[5][1]}} "
-            f"{format_number(item.corr):>{COLUMNS[6][1]}}"
+            f"{format_number(item.rel_rmse):>{COLUMNS[5][1]}} "
+            f"{format_number(item.max_abs):>{COLUMNS[6][1]}} "
+            f"{format_number(item.corr):>{COLUMNS[7][1]}}"
         )
     return "\n".join(rows)
 
@@ -59,8 +62,8 @@ def render_markdown(
     lines.extend(
         [
             "",
-            "| Variable | Status | Bias | MAE | RMSE | MaxAbs | Corr |",
-            "|---|---:|---:|---:|---:|---:|---:|",
+            "| Variable | Status | Bias | MAE | RMSE | RelRMSE | MaxAbs | Corr |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
     for item in stats:
@@ -73,6 +76,7 @@ def render_markdown(
                     format_number(item.bias),
                     format_number(item.mae),
                     format_number(item.rmse),
+                    format_number(item.rel_rmse),
                     format_number(item.max_abs),
                     format_number(item.corr),
                 ]
