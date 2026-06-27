@@ -4,6 +4,7 @@ import shutil
 from pathlib import Path
 
 from ..shell import write_text
+from ..vbal_core.model import vbal_date
 from ..vbal_core.validate import validate as validate_vbal
 from .config_files import write_hdiag_pbs, write_hdiag_yaml
 from .model import hdiag_workspace, require_hdiag_members
@@ -25,16 +26,6 @@ def prepare(config, vbal_workspace: str | Path, workspace: str | Path | None = N
     run_dir.mkdir(parents=True, exist_ok=True)
 
     link_hdiag_inputs(vbal_root, out, run_dir)
-    from ..vbal_core.model import iso_date
-    from ..vbal_core.model import read_bflow_samples
-
-    # Keep the date convention from VBAL by reading the first BFLOW-derived member if available.
-    # Fallback to the date embedded in VBAL YAML is intentionally avoided here because HDIAG
-    # writes its own YAML from the same staged sample set.
-    manifest_samples = read_bflow_samples(vbal_root.parent.parent / "bflow_preprocessing" / vbal_root.name) if False else None
-    del manifest_samples
-    from ..bcov import vbal_date  # temporary fallback until vbal_core exposes YAML date parser
-
     write_hdiag_yaml(run_dir / "run_hdiag.yaml", len(samples), vbal_date(vbal_root))
     write_hdiag_pbs(config, run_dir)
     write_text(
