@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
-from ..forecast import bflow_file
+from ..mpas_core.model import bflow_file
 
 TIME_FORMAT = "%Y-%m-%d_%H:%M:%S"
 DEFAULT_CONFIG = "configs/jaci-x1.10242.yaml"
