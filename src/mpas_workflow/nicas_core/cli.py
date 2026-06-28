@@ -3,9 +3,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ..bcov import DEFAULT_CONFIG
 from ..config import load_config
 from .runner import prepare, submit, validate
+
+DEFAULT_CONFIG = "configs/jaci-x1.10242.yaml"
 
 
 def parser() -> argparse.ArgumentParser:
