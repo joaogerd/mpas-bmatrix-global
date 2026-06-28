@@ -25,7 +25,8 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--init-time", required=True)
     run.add_argument("--lead-hours", type=int, required=True)
     run.add_argument("--dt", type=int)
-    run.add_argument("--wait", action="store_true", help="usa qsub -W block=true para aguardar o job terminar")
+    run.add_argument("--wait", action="store_true", help="monitora o job PBS até ele sair do qstat")
+    run.add_argument("--poll-seconds", type=int, default=30, help="intervalo de monitoramento quando --wait é usado")
     run.set_defaults(func=submit_command)
     return p
 
@@ -38,7 +39,16 @@ def prepare_command(args) -> int:
 
 def submit_command(args) -> int:
     config = load_config(args.config)
-    print(submit(config, args.init_time, args.lead_hours, dt=args.dt, wait=args.wait))
+    print(
+        submit(
+            config,
+            args.init_time,
+            args.lead_hours,
+            dt=args.dt,
+            wait=args.wait,
+            poll_seconds=args.poll_seconds,
+        )
+    )
     return 0
 
 
