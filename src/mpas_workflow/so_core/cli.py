@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ..bcov import DEFAULT_CONFIG, SO_VARIANTS
 from ..config import load_config
+from .model import SO_VARIANTS
 from .runner import prepare, submit, validate
+
+DEFAULT_CONFIG = "configs/jaci-x1.10242.yaml"
 
 
 def parser() -> argparse.ArgumentParser:
