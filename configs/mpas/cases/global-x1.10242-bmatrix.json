@@ -5,5 +5,14 @@
   ],
   "case": {
     "name": "global-x1.10242-bmatrix"
+  },
+  "stages": {
+    "forecast": {
+      "runtime": {
+        "additional_expected_outputs": [
+          "{da_state_filename}"
+        ]
+      }
+    }
   }
 }
