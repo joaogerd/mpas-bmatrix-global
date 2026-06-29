@@ -1,14 +1,3 @@
-# =============================================================================
-# MPAS runtime defaults: forecast
-# =============================================================================
-#
-# Propósito
-# ---------
-# Declara como montar uma integração MPAS a partir de static.nc e init.nc já
-# produzidos. O preparador não executa mpas_atmosphere; ele somente cria links
-# reproduzíveis, valida insumos e registra o manifesto de runtime.
-# =============================================================================
-
 stages:
   forecast:
     runtime:
@@ -17,12 +6,10 @@ stages:
         source: "{mpas_atmosphere_executable}"
         destination: mpas_atmosphere
       links:
-        # Artefatos renderizados do forecast.
         - source: "{render_root}/forecast/{safe_time}/f{lead_hours:03d}_dt{dt}_np{nproc}/namelist.atmosphere"
           destination: namelist.atmosphere
         - source: "{render_root}/forecast/{safe_time}/f{lead_hours:03d}_dt{dt}_np{nproc}/streams.atmosphere"
           destination: streams.atmosphere
-        # Produtos de static e init do mesmo caso/ciclo.
         - source: "{runtime_root}/static/{static_output_name}"
           destination: "{static_output_name}"
         - source: "{runtime_root}/static/{surface_update_output_name}"
@@ -31,11 +18,19 @@ stages:
           destination: "{ugwp_oro_output_name}"
         - source: "{runtime_root}/init/{safe_time}/{init_output_name}"
           destination: "{init_output_name}"
-        # Grafo e partição necessários para a execução MPI.
+        - source: "{grid_path}"
+          destination: "{grid_local_name}"
         - source: "{graph_path}"
           destination: "{graph_basename}"
         - source: "{partition_path}"
           destination: "{graph_basename}.part.{nproc}"
+        - source: "{project_root}/external-inputs/mpasjedi_tutorial202509NCAR/MPAS_namelist_stream_physics_files/stream_list.atmosphere.analysis"
+          destination: stream_list.atmosphere.analysis
+        - source: "{project_root}/external-inputs/mpasjedi_tutorial202509NCAR/MPAS_namelist_stream_physics_files/stream_list.atmosphere.background"
+          destination: stream_list.atmosphere.background
+        - source: "{project_root}/external-inputs/mpasjedi_tutorial202509NCAR/MPAS_namelist_stream_physics_files/stream_list.atmosphere.control"
+          destination: stream_list.atmosphere.control
+        - source: "{project_root}/external-inputs/mpasjedi_tutorial202509NCAR/MPAS_namelist_stream_physics_files/stream_list.atmosphere.ensemble"
+          destination: stream_list.atmosphere.ensemble
       expected_outputs:
-        # O primeiro restart esperado para o intervalo de saída configurado.
         - "{restart_filename}"
