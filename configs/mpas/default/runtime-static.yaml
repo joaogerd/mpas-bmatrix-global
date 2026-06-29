@@ -2,47 +2,50 @@
 # MPAS runtime defaults: static
 # =============================================================================
 #
-# Propósito
-# ---------
-# Declara como transformar o resultado de `mpas-render --stage static` em um
-# diretório pronto para receber mpas_init_atmosphere. O preparador cria somente
-# links simbólicos e um manifesto; a execução do modelo ocorre em outra etapa.
-#
-# `required_files` evita submeter um job quando o conjunto WPS_GEOG está
-# incompleto. O MPAS usa config_topo_data = GMTED2010 no template atual e abre
-# especificamente topo_gmted2010_30s/index durante a interpolação de terreno.
+# O estágio static usa uma visão WPS_GEOG preparada por `mpas-assets` a partir
+# da árvore compartilhada MONAN e, quando necessário, de um overlay local.
+# Nenhum geotile é copiado para o diretório de runtime.
 # =============================================================================
 
 stages:
   static:
     runtime:
-      # Diretório de execução do estágio; separado do diretório de renderização.
       output_dir: "{runtime_root}/static"
       executable:
-        # Executável usado pelo estágio static do MPAS real-data.
         source: "{mpas_init_executable}"
         destination: mpas_init_atmosphere
-      # Diretórios que devem existir, mas não precisam ser copiados para runtime.
       required_directories:
         - "{wps_geog_data_path}"
-      # Arquivos cuja ausência impede o MPAS antes de produzir static.nc.
+      # Mantido no contrato de runtime para que `mpas-stage-prepare` também
+      # recuse um caso incompleto, mesmo quando chamado sem `mpas-cycle`.
       required_files:
         - "{wps_geog_data_path}/topo_gmted2010_30s/index"
-      # Cada item cria um link dentro de output_dir.
+        - "{wps_geog_data_path}/modis_landuse_20class_30s/index"
+        - "{wps_geog_data_path}/soiltype_top_30s/index"
+        - "{wps_geog_data_path}/soiltype_bot_30s/index"
+        - "{wps_geog_data_path}/soiltemp_1deg/index"
+        - "{wps_geog_data_path}/maxsnowalb_modis/index"
+        - "{wps_geog_data_path}/greenfrac_fpar_modis/index"
+        - "{wps_geog_data_path}/albedo_modis/index"
+        - "{wps_geog_data_path}/lai_modis_30s/index"
+        - "{wps_geog_data_path}/soilgrids/soilcomp/index"
+        - "{wps_geog_data_path}/soilgrids/texture_top/index"
+        - "{wps_geog_data_path}/soilgrids/texture_bot/index"
+        - "{wps_geog_data_path}/soilgrids/texture_layer1/index"
+        - "{wps_geog_data_path}/soilgrids/texture_layer2/index"
+        - "{wps_geog_data_path}/soilgrids/texture_layer3/index"
+        - "{wps_geog_data_path}/soilgrids/texture_layer4/index"
       links:
-        # Artefatos gerados pelo renderer.
         - source: "{render_root}/static/namelist.init_atmosphere"
           destination: namelist.init_atmosphere
         - source: "{render_root}/static/streams.init_atmosphere"
           destination: streams.init_atmosphere
-        # Geometria, grafo e partição da malha.
         - source: "{grid_path}"
           destination: "{grid_local_name}"
         - source: "{graph_path}"
           destination: "{graph_basename}"
         - source: "{partition_path}"
           destination: "{graph_basename}.part.{nproc}"
-      # Produtos esperados depois de uma futura execução bem-sucedida do MPAS.
       expected_outputs:
         - "{static_output_name}"
         - "{surface_update_output_name}"
