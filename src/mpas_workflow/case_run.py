@@ -11,22 +11,41 @@ from .case_render import _time_context, render_stage
 from .case_wps import ensure_wps_file
 from .runtime_prepare import prepare_stage
 from .shell import qsub, wait_for_pbs_job
+from .site_assets import SiteAssetError, prepare_wps_geog_assets
 
 
 TIME_FORMAT = "%Y-%m-%d_%H:%M:%S"
-STATIC_GEOTILE_INDEXES = (
+LEGACY_STATIC_GEOTILE_INDEXES = (
     "topo_gmted2010_30s/index",
-    "modis_landuse_20class_5m_with_lakes/index",
-    "soiltype_top_5m/index",
-    "soiltype_bot_5m/index",
-    "greenfrac_fpar_modis_5m/index",
-    "albedo_modis/index",
+    "modis_landuse_20class_30s/index",
+    "soiltype_top_30s/index",
+    "soiltype_bot_30s/index",
+    "soiltemp_1deg/index",
     "maxsnowalb_modis/index",
+    "greenfrac_fpar_modis/index",
+    "albedo_modis/index",
+    "lai_modis_30s/index",
+    "soilgrids/soilcomp/index",
+    "soilgrids/texture_top/index",
+    "soilgrids/texture_bot/index",
+    "soilgrids/texture_layer1/index",
+    "soilgrids/texture_layer2/index",
+    "soilgrids/texture_layer3/index",
+    "soilgrids/texture_layer4/index",
 )
 FORECAST_PHYSICS_FILES = (
-    "CAM_ABS_DATA.DBL", "CAM_AEROPT_DATA.DBL", "GENPARM.TBL", "LANDUSE.TBL",
-    "OZONE_DAT.TBL", "RRTMG_LW_DATA", "RRTMG_LW_DATA.DBL", "RRTMG_SW_DATA",
-    "RRTMG_SW_DATA.DBL", "SOILPARM.TBL", "VEGPARM.TBL", "VERSION",
+    "CAM_ABS_DATA.DBL",
+    "CAM_AEROPT_DATA.DBL",
+    "GENPARM.TBL",
+    "LANDUSE.TBL",
+    "OZONE_DAT.TBL",
+    "RRTMG_LW_DATA",
+    "RRTMG_LW_DATA.DBL",
+    "RRTMG_SW_DATA",
+    "RRTMG_SW_DATA.DBL",
+    "SOILPARM.TBL",
+    "VEGPARM.TBL",
+    "VERSION",
 )
 
 
@@ -46,7 +65,11 @@ def _text(value: Any, label: str) -> str:
     return value
 
 
-def _stage(case: CaseConfig, stage_name: str, overrides: Mapping[str, Any]) -> tuple[dict[str, Any], Mapping[str, Any]]:
+def _stage(
+    case: CaseConfig,
+    stage_name: str,
+    overrides: Mapping[str, Any],
+) -> tuple[dict[str, Any], Mapping[str, Any]]:
     context = resolve_context(case, overrides)
     stages = _mapping(case.data.get("stages", {}), "stages")
     if stage_name not in stages:
@@ -65,8 +88,12 @@ def _expand_mpas_time(value: str, valid_time: str) -> str:
     except ValueError as exc:
         raise CaseRunError(f"valid_time inválido: {valid_time}") from exc
     for token, replacement in {
-        "$Y": instant.strftime("%Y"), "$M": instant.strftime("%m"), "$D": instant.strftime("%d"),
-        "$h": instant.strftime("%H"), "$m": instant.strftime("%M"), "$s": instant.strftime("%S"),
+        "$Y": instant.strftime("%Y"),
+        "$M": instant.strftime("%m"),
+        "$D": instant.strftime("%d"),
+        "$h": instant.strftime("%H"),
+        "$m": instant.strftime("%M"),
+        "$s": instant.strftime("%S"),
     }.items():
         value = value.replace(token, replacement)
     return value
@@ -74,7 +101,9 @@ def _expand_mpas_time(value: str, valid_time: str) -> str:
 
 def _outputs(stage: Mapping[str, Any], context: Mapping[str, Any]) -> tuple[Path, ...]:
     runtime = _mapping(stage.get("runtime"), "stage.runtime")
-    raw = list(runtime.get("expected_outputs", [])) + list(runtime.get("additional_expected_outputs", []))
+    raw = list(runtime.get("expected_outputs", [])) + list(
+        runtime.get("additional_expected_outputs", [])
+    )
     if not raw or not all(isinstance(item, str) and item for item in raw):
         raise CaseRunError("runtime.expected_outputs deve declarar ao menos uma saída.")
     directory = _runtime_dir(stage)
@@ -90,15 +119,33 @@ def _outputs(stage: Mapping[str, Any], context: Mapping[str, Any]) -> tuple[Path
 
 def _default_execution(context: Mapping[str, Any], stage_name: str) -> dict[str, Any]:
     names = {"static": "mstatic10242", "init": "minit10242", "forecast": "mfcst10242"}
-    queues = {"static": context.get("pbs_queue_static", "pesqmini"), "init": context.get("pbs_queue_init", "pesqmini"), "forecast": context.get("pbs_queue_forecast", "pesqmidi")}
+    queues = {
+        "static": context.get("pbs_queue_static", "pesqmini"),
+        "init": context.get("pbs_queue_init", "pesqmini"),
+        "forecast": context.get("pbs_queue_forecast", "pesqmidi"),
+    }
     if stage_name == "forecast":
-        walltime: Any = {"default": context.get("pbs_walltime_forecast_default", "02:00:00"), "by_lead_hours": {"24": context.get("pbs_walltime_forecast_f024", "01:00:00"), "48": context.get("pbs_walltime_forecast_f048", "02:00:00")}}
+        walltime: Any = {
+            "default": context.get("pbs_walltime_forecast_default", "02:00:00"),
+            "by_lead_hours": {
+                "24": context.get("pbs_walltime_forecast_f024", "01:00:00"),
+                "48": context.get("pbs_walltime_forecast_f048", "02:00:00"),
+            },
+        }
     else:
         walltime = context.get(f"pbs_walltime_{stage_name}", "00:20:00")
-    return {"job_name": names.get(stage_name, f"mpas_{stage_name}"), "queue": queues.get(stage_name, "pesqmini"), "walltime": walltime}
+    return {
+        "job_name": names.get(stage_name, f"mpas_{stage_name}"),
+        "queue": queues.get(stage_name, "pesqmini"),
+        "walltime": walltime,
+    }
 
 
-def _execution(context: Mapping[str, Any], stage_name: str, stage: Mapping[str, Any]) -> Mapping[str, Any]:
+def _execution(
+    context: Mapping[str, Any],
+    stage_name: str,
+    stage: Mapping[str, Any],
+) -> Mapping[str, Any]:
     raw = stage.get("execution")
     if raw is None:
         return _default_execution(context, stage_name)
@@ -119,7 +166,14 @@ def _walltime(execution: Mapping[str, Any], lead_hours: int) -> str:
     return _text(raw.get("default"), "execution.walltime.default")
 
 
-def _pbs_text(*, context: Mapping[str, Any], stage_name: str, stage: Mapping[str, Any], runtime_dir: Path, lead_hours: int) -> str:
+def _pbs_text(
+    *,
+    context: Mapping[str, Any],
+    stage_name: str,
+    stage: Mapping[str, Any],
+    runtime_dir: Path,
+    lead_hours: int,
+) -> str:
     runtime = _mapping(stage.get("runtime"), "stage.runtime")
     executable = _mapping(runtime.get("executable"), "runtime.executable")
     execution = _execution(context, stage_name, stage)
@@ -145,18 +199,46 @@ mpiexec -n {nproc} \"./{_text(executable.get('destination'), 'runtime.executable
 """
 
 
-def _write_pbs(context: Mapping[str, Any], stage_name: str, stage: Mapping[str, Any], lead_hours: int) -> Path:
+def _write_pbs(
+    context: Mapping[str, Any],
+    stage_name: str,
+    stage: Mapping[str, Any],
+    lead_hours: int,
+) -> Path:
     runtime_dir = _runtime_dir(stage)
     path = runtime_dir / f"run_mpas_{stage_name}.pbs"
-    path.write_text(_pbs_text(context=context, stage_name=stage_name, stage=stage, runtime_dir=runtime_dir, lead_hours=lead_hours))
+    path.write_text(
+        _pbs_text(
+            context=context,
+            stage_name=stage_name,
+            stage=stage,
+            runtime_dir=runtime_dir,
+            lead_hours=lead_hours,
+        )
+    )
     return path
 
 
-def _validate_static_geography(context: Mapping[str, Any]) -> None:
+def _validate_static_geography(
+    case: CaseConfig,
+    context: Mapping[str, Any],
+    overrides: Mapping[str, Any],
+) -> None:
+    """Prepare the declared MONAN WPS_GEOG view before allocating PBS resources."""
+    try:
+        assets = prepare_wps_geog_assets(case, overrides=overrides, materialize=True)
+    except SiteAssetError as exc:
+        raise CaseRunError(f"WPS_GEOG inválido para static: {exc}") from exc
+    if assets is not None:
+        print(f"OK: ativos WPS_GEOG preparados: {assets.view_root}")
+        return
+
     root = Path(_text(context.get("wps_geog_data_path"), "context.wps_geog_data_path"))
-    missing = [root / item for item in STATIC_GEOTILE_INDEXES if not (root / item).is_file()]
+    missing = [root / item for item in LEGACY_STATIC_GEOTILE_INDEXES if not (root / item).is_file()]
     if missing:
-        raise CaseRunError("WPS_GEOG incompleto para static:\n" + "\n".join(f"- {path}" for path in missing))
+        raise CaseRunError(
+            "WPS_GEOG incompleto para static:\n" + "\n".join(f"- {path}" for path in missing)
+        )
 
 
 def _safe_link(source: Path, destination: Path) -> None:
@@ -170,7 +252,10 @@ def _safe_link(source: Path, destination: Path) -> None:
 
 
 def _link_forecast_assets(context: Mapping[str, Any], runtime_dir: Path) -> None:
-    _safe_link(Path(_text(context.get("grid_path"), "context.grid_path")), runtime_dir / _text(context.get("grid_local_name"), "context.grid_local_name"))
+    _safe_link(
+        Path(_text(context.get("grid_path"), "context.grid_path")),
+        runtime_dir / _text(context.get("grid_local_name"), "context.grid_local_name"),
+    )
     share = Path(_text(context.get("atmosphere_share"), "context.atmosphere_share"))
     for name in FORECAST_PHYSICS_FILES:
         _safe_link(share / name, runtime_dir / name)
@@ -192,7 +277,19 @@ def _base_overrides(init_time: str, lead_hours: int, dt: int) -> dict[str, Any]:
     return _time_context(init_time, lead_hours, dt)
 
 
-def ensure_stage(case: CaseConfig, stage_name: str, *, init_time: str, lead_hours: int = 0, dt: int = 1200, submit: bool = False, wait: bool = False, force: bool = False, download: bool = True, poll_seconds: int = 30) -> bool:
+def ensure_stage(
+    case: CaseConfig,
+    stage_name: str,
+    *,
+    init_time: str,
+    lead_hours: int = 0,
+    dt: int = 1200,
+    submit: bool = False,
+    wait: bool = False,
+    force: bool = False,
+    download: bool = True,
+    poll_seconds: int = 30,
+) -> bool:
     """Ensure one stage exists; WPS runs only if a missing init must be built."""
     overrides = _base_overrides(init_time, lead_hours, dt)
     context, stage = _stage(case, stage_name, overrides)
@@ -201,7 +298,7 @@ def ensure_stage(case: CaseConfig, stage_name: str, *, init_time: str, lead_hour
         print(f"OK: estágio {stage_name} já concluído: {outputs[0]}")
         return True
     if stage_name == "static":
-        _validate_static_geography(context)
+        _validate_static_geography(case, context, overrides)
     if stage_name == "init":
         file_path = ensure_wps_file(case, init_time, overrides=overrides, download=download)
         overrides["wps_input_dir"] = str(file_path.parent)
@@ -228,28 +325,89 @@ def ensure_stage(case: CaseConfig, stage_name: str, *, init_time: str, lead_hour
     return True
 
 
-def ensure_cycle(case: CaseConfig, *, init_time: str, lead_hours: int, dt: int, submit: bool, wait: bool, force: bool = False, download: bool = True, poll_seconds: int = 30) -> bool:
+def ensure_cycle(
+    case: CaseConfig,
+    *,
+    init_time: str,
+    lead_hours: int,
+    dt: int,
+    submit: bool,
+    wait: bool,
+    force: bool = False,
+    download: bool = True,
+    poll_seconds: int = 30,
+) -> bool:
     """Ensure static, init, and one forecast in dependency order."""
     if submit and not wait:
         raise CaseRunError("Um ciclo completo com --submit requer --wait para respeitar dependências PBS.")
-    if not ensure_stage(case, "static", init_time=init_time, dt=dt, submit=submit, wait=wait, force=force, poll_seconds=poll_seconds):
+    if not ensure_stage(
+        case,
+        "static",
+        init_time=init_time,
+        dt=dt,
+        submit=submit,
+        wait=wait,
+        force=force,
+        poll_seconds=poll_seconds,
+    ):
         return False
-    if not ensure_stage(case, "init", init_time=init_time, dt=dt, submit=submit, wait=wait, force=force, download=download, poll_seconds=poll_seconds):
+    if not ensure_stage(
+        case,
+        "init",
+        init_time=init_time,
+        dt=dt,
+        submit=submit,
+        wait=wait,
+        force=force,
+        download=download,
+        poll_seconds=poll_seconds,
+    ):
         return False
-    return ensure_stage(case, "forecast", init_time=init_time, lead_hours=lead_hours, dt=dt, submit=submit, wait=wait, force=force, poll_seconds=poll_seconds)
+    return ensure_stage(
+        case,
+        "forecast",
+        init_time=init_time,
+        lead_hours=lead_hours,
+        dt=dt,
+        submit=submit,
+        wait=wait,
+        force=force,
+        poll_seconds=poll_seconds,
+    )
 
 
 def _forecast_data_file(case: CaseConfig, init_time: str, lead_hours: int, dt: int) -> Path:
     overrides = _base_overrides(init_time, lead_hours, dt)
     context, stage = _stage(case, "forecast", overrides)
-    streams = _mapping(_mapping(stage.get("streams"), "forecast.streams").get("streams"), "forecast.streams.streams")
-    attrs = _mapping(_mapping(streams.get("da_state", {}), "forecast.streams.da_state").get("attributes", {}), "forecast.streams.da_state.attributes")
+    streams = _mapping(
+        _mapping(stage.get("streams"), "forecast.streams").get("streams"),
+        "forecast.streams.streams",
+    )
+    attrs = _mapping(
+        _mapping(streams.get("da_state", {}), "forecast.streams.da_state").get("attributes", {}),
+        "forecast.streams.da_state.attributes",
+    )
     if attrs.get("type") != "output":
-        raise CaseRunError("O caso não ativa da_state; use o overlay MONAN-JEDI para produzir pares NMC da matriz B.")
-    return _runtime_dir(stage) / _expand_mpas_time(_text(attrs.get("filename_template"), "da_state.filename_template"), _text(context.get("valid_time"), "context.valid_time"))
+        raise CaseRunError(
+            "O caso não ativa da_state; use o overlay MONAN-JEDI para produzir pares NMC da matriz B."
+        )
+    return _runtime_dir(stage) / _expand_mpas_time(
+        _text(attrs.get("filename_template"), "da_state.filename_template"),
+        _text(context.get("valid_time"), "context.valid_time"),
+    )
 
 
-def ensure_nmc_pair(case: CaseConfig, *, valid_time: str, dt: int, submit: bool, wait: bool, force: bool = False, download: bool = True, poll_seconds: int = 30) -> Path:
+def ensure_nmc_pair(
+    case: CaseConfig,
+    *,
+    valid_time: str,
+    dt: int,
+    submit: bool,
+    wait: bool,
+    force: bool = False,
+    download: bool = True,
+    poll_seconds: int = 30,
+) -> Path:
     """Produce one f048/f024 pair with the same valid time for BFLOW."""
     try:
         valid = datetime.strptime(valid_time, TIME_FORMAT)
@@ -257,15 +415,37 @@ def ensure_nmc_pair(case: CaseConfig, *, valid_time: str, dt: int, submit: bool,
         raise CaseRunError(f"valid_time deve seguir {TIME_FORMAT}: {valid_time}") from exc
     old_init = (valid - timedelta(hours=48)).strftime(TIME_FORMAT)
     new_init = (valid - timedelta(hours=24)).strftime(TIME_FORMAT)
-    if not ensure_cycle(case, init_time=old_init, lead_hours=48, dt=dt, submit=submit, wait=wait, force=force, download=download, poll_seconds=poll_seconds):
+    if not ensure_cycle(
+        case,
+        init_time=old_init,
+        lead_hours=48,
+        dt=dt,
+        submit=submit,
+        wait=wait,
+        force=force,
+        download=download,
+        poll_seconds=poll_seconds,
+    ):
         raise CaseRunError("Forecast f048 ainda não concluído.")
-    if not ensure_cycle(case, init_time=new_init, lead_hours=24, dt=dt, submit=submit, wait=wait, force=force, download=download, poll_seconds=poll_seconds):
+    if not ensure_cycle(
+        case,
+        init_time=new_init,
+        lead_hours=24,
+        dt=dt,
+        submit=submit,
+        wait=wait,
+        force=force,
+        download=download,
+        poll_seconds=poll_seconds,
+    ):
         raise CaseRunError("Forecast f024 ainda não concluído.")
     f048 = _forecast_data_file(case, old_init, 48, dt)
     f024 = _forecast_data_file(case, new_init, 24, dt)
     _validate_outputs((f048, f024))
     context = resolve_context(case, _base_overrides(valid_time, 0, dt))
-    root = Path(str(context.get("nmc_pair_root", Path(str(context["work_root"])) / "nmc_pairs" / case.name)))
+    root = Path(
+        str(context.get("nmc_pair_root", Path(str(context["work_root"])) / "nmc_pairs" / case.name))
+    )
     pair_dir = root / f"nmc_{case.name}_valid_{valid_time.replace(':', '.')}"
     pair_dir.mkdir(parents=True, exist_ok=True)
     for source, name in ((f048, "f048.nc"), (f024, "f024.nc")):
@@ -273,6 +453,9 @@ def ensure_nmc_pair(case: CaseConfig, *, valid_time: str, dt: int, submit: bool,
         if destination.exists() or destination.is_symlink():
             destination.unlink()
         destination.symlink_to(source)
-    (pair_dir / "manifest.json").write_text(json.dumps({"valid_time": valid_time, "f048": str(f048), "f024": str(f024)}, indent=2) + "\n")
+    (pair_dir / "manifest.json").write_text(
+        json.dumps({"valid_time": valid_time, "f048": str(f048), "f024": str(f024)}, indent=2)
+        + "\n"
+    )
     print(f"OK: par NMC preparado: {pair_dir}")
     return pair_dir
