@@ -4,13 +4,12 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
 import json
-import re
 from typing import Any, Mapping
 
 from .case_config import CaseConfig, resolve_context, resolve_structure
 from .case_render import _time_context, render_stage
 from .case_wps import ensure_wps_file
-from .runtime_prepare import RuntimePrepareError, prepare_stage
+from .runtime_prepare import prepare_stage
 from .shell import qsub, wait_for_pbs_job
 
 
@@ -65,17 +64,43 @@ def _outputs(stage: Mapping[str, Any], context: Mapping[str, Any]) -> tuple[Path
     if not raw or not all(isinstance(item, str) and item for item in raw):
         raise CaseRunError("runtime.expected_outputs deve declarar ao menos uma saída.")
     directory = _runtime_dir(stage)
+    valid_time = _text(context.get("valid_time", context.get("init_time")), "context.valid_time")
     result: list[Path] = []
     for item in raw:
-        path = Path(_expand_mpas_time(item, str(context.get("valid_time", context.get("init_time", "")))))
+        path = Path(_expand_mpas_time(item, valid_time))
         if path.is_absolute() or ".." in path.parts:
             raise CaseRunError(f"Saída de runtime deve ser relativa: {item}")
         result.append(directory / path)
     return tuple(result)
 
 
-def _execution(stage: Mapping[str, Any]) -> Mapping[str, Any]:
-    return _mapping(stage.get("execution"), "stage.execution")
+def _default_execution(context: Mapping[str, Any], stage_name: str) -> dict[str, Any]:
+    names = {"static": "mstatic10242", "init": "minit10242", "forecast": "mfcst10242"}
+    queues = {
+        "static": context.get("pbs_queue_static", "pesqmini"),
+        "init": context.get("pbs_queue_init", "pesqmini"),
+        "forecast": context.get("pbs_queue_forecast", "pesqmidi"),
+    }
+    if stage_name == "forecast":
+        walltime: Any = {
+            "default": context.get("pbs_walltime_forecast_default", "02:00:00"),
+            "by_lead_hours": {
+                "24": context.get("pbs_walltime_forecast_f024", "01:00:00"),
+                "48": context.get("pbs_walltime_forecast_f048", "02:00:00"),
+            },
+        }
+    else:
+        walltime = context.get(f"pbs_walltime_{stage_name}", "00:20:00")
+    return {"job_name": names.get(stage_name, f"mpas_{stage_name}"), "queue": queues.get(stage_name, "pesqmini"), "walltime": walltime}
+
+
+def _execution(context: Mapping[str, Any], stage_name: str, stage: Mapping[str, Any]) -> Mapping[str, Any]:
+    raw = stage.get("execution")
+    if raw is None:
+        return _default_execution(context, stage_name)
+    configured = dict(_mapping(raw, "stage.execution"))
+    defaults = _default_execution(context, stage_name)
+    return {**defaults, **configured}
 
 
 def _walltime(execution: Mapping[str, Any], lead_hours: int) -> str:
@@ -92,17 +117,10 @@ def _walltime(execution: Mapping[str, Any], lead_hours: int) -> str:
     return _text(raw.get("default"), "execution.walltime.default")
 
 
-def _pbs_text(
-    *,
-    context: Mapping[str, Any],
-    stage_name: str,
-    stage: Mapping[str, Any],
-    runtime_dir: Path,
-    lead_hours: int,
-) -> str:
+def _pbs_text(*, context: Mapping[str, Any], stage_name: str, stage: Mapping[str, Any], runtime_dir: Path, lead_hours: int) -> str:
     runtime = _mapping(stage.get("runtime"), "stage.runtime")
     executable = _mapping(runtime.get("executable"), "runtime.executable")
-    execution = _execution(stage)
+    execution = _execution(context, stage_name, stage)
     nproc = int(context.get("nproc", 0))
     if nproc <= 0:
         raise CaseRunError("context.nproc deve ser positivo.")
@@ -111,8 +129,6 @@ def _pbs_text(
     walltime = _walltime(execution, lead_hours)
     repo = _text(context.get("repository_root"), "context.repository_root")
     local_executable = _text(executable.get("destination"), "runtime.executable.destination")
-    stdout = f"stdout.{stage_name}.log"
-    stderr = f"stderr.{stage_name}.log"
     return f"""#!/bin/bash
 #PBS -N {job_name}
 #PBS -q {queue}
@@ -129,8 +145,8 @@ export FI_CXI_RX_MATCH_MODE=hybrid
 export GFORTRAN_CONVERT_UNIT=big_endian:101-200
 ulimit -s unlimited || true
 
-rm -f \"{stdout}\" \"{stderr}\"
-mpiexec -n {nproc} \"./{local_executable}\" > \"{stdout}\" 2> \"{stderr}\"
+rm -f stdout.{stage_name}.log stderr.{stage_name}.log
+mpiexec -n {nproc} \"./{local_executable}\" > stdout.{stage_name}.log 2> stderr.{stage_name}.log
 """
 
 
@@ -157,30 +173,20 @@ def _base_overrides(init_time: str, lead_hours: int, dt: int) -> dict[str, Any]:
     return _time_context(init_time, lead_hours, dt)
 
 
-def ensure_stage(
-    case: CaseConfig,
-    stage_name: str,
-    *,
-    init_time: str,
-    lead_hours: int = 0,
-    dt: int = 1200,
-    submit: bool = False,
-    wait: bool = False,
-    force: bool = False,
-    download: bool = True,
-    poll_seconds: int = 30,
-) -> bool:
-    """Ensure one stage exists; init obtains FILE:* only when it is absent."""
+def ensure_stage(case: CaseConfig, stage_name: str, *, init_time: str, lead_hours: int = 0, dt: int = 1200, submit: bool = False, wait: bool = False, force: bool = False, download: bool = True, poll_seconds: int = 30) -> bool:
+    """Ensure one stage exists; WPS runs only if a missing init must be built."""
     overrides = _base_overrides(init_time, lead_hours, dt)
-    if stage_name == "init":
-        file_path = ensure_wps_file(case, init_time, overrides=overrides, download=download)
-        overrides["wps_input_dir"] = str(file_path.parent)
-
     context, stage = _stage(case, stage_name, overrides)
     outputs = _outputs(stage, context)
     if not force and all(path.is_file() and path.stat().st_size > 0 for path in outputs):
         print(f"OK: estágio {stage_name} já concluído: {outputs[0]}")
         return True
+
+    if stage_name == "init":
+        file_path = ensure_wps_file(case, init_time, overrides=overrides, download=download)
+        overrides["wps_input_dir"] = str(file_path.parent)
+        context, stage = _stage(case, stage_name, overrides)
+        outputs = _outputs(stage, context)
     if force:
         _remove_outputs(outputs)
 
@@ -189,9 +195,9 @@ def ensure_stage(
     pbs = _write_pbs(context, stage_name, stage, lead_hours)
     print(f"OK: runtime {stage_name} preparado: {prepared.output_dir}")
     print(f"PBS={pbs}")
-
     if not submit:
         return False
+
     jobid = qsub(pbs.name, prepared.output_dir)
     print(f"JOBID={jobid}")
     if not wait:
@@ -202,18 +208,7 @@ def ensure_stage(
     return True
 
 
-def ensure_cycle(
-    case: CaseConfig,
-    *,
-    init_time: str,
-    lead_hours: int,
-    dt: int,
-    submit: bool,
-    wait: bool,
-    force: bool = False,
-    download: bool = True,
-    poll_seconds: int = 30,
-) -> bool:
+def ensure_cycle(case: CaseConfig, *, init_time: str, lead_hours: int, dt: int, submit: bool, wait: bool, force: bool = False, download: bool = True, poll_seconds: int = 30) -> bool:
     """Ensure static, init, and one forecast in dependency order."""
     if submit and not wait:
         raise CaseRunError("Um ciclo completo com --submit requer --wait para respeitar dependências PBS.")
@@ -228,26 +223,13 @@ def _forecast_data_file(case: CaseConfig, init_time: str, lead_hours: int, dt: i
     overrides = _base_overrides(init_time, lead_hours, dt)
     context, stage = _stage(case, "forecast", overrides)
     streams = _mapping(_mapping(stage.get("streams"), "forecast.streams").get("streams"), "forecast.streams.streams")
-    da_state = _mapping(streams.get("da_state", {}), "forecast.streams.da_state")
-    attrs = _mapping(da_state.get("attributes", {}), "forecast.streams.da_state.attributes")
+    attrs = _mapping(_mapping(streams.get("da_state", {}), "forecast.streams.da_state").get("attributes", {}), "forecast.streams.da_state.attributes")
     if attrs.get("type") != "output":
         raise CaseRunError("O caso não ativa da_state; use o caso MONAN-JEDI para produzir pares NMC da matriz B.")
-    template = _text(attrs.get("filename_template"), "da_state.filename_template")
-    path = _runtime_dir(stage) / _expand_mpas_time(template, _text(context.get("valid_time"), "context.valid_time"))
-    return path
+    return _runtime_dir(stage) / _expand_mpas_time(_text(attrs.get("filename_template"), "da_state.filename_template"), _text(context.get("valid_time"), "context.valid_time"))
 
 
-def ensure_nmc_pair(
-    case: CaseConfig,
-    *,
-    valid_time: str,
-    dt: int,
-    submit: bool,
-    wait: bool,
-    force: bool = False,
-    download: bool = True,
-    poll_seconds: int = 30,
-) -> Path:
+def ensure_nmc_pair(case: CaseConfig, *, valid_time: str, dt: int, submit: bool, wait: bool, force: bool = False, download: bool = True, poll_seconds: int = 30) -> Path:
     """Produce one f048/f024 pair with the same valid time for BFLOW."""
     try:
         valid = datetime.strptime(valid_time, TIME_FORMAT)
@@ -259,13 +241,12 @@ def ensure_nmc_pair(
         raise CaseRunError("Forecast f048 ainda não concluído.")
     if not ensure_cycle(case, init_time=new_init, lead_hours=24, dt=dt, submit=submit, wait=wait, force=force, download=download, poll_seconds=poll_seconds):
         raise CaseRunError("Forecast f024 ainda não concluído.")
-
     f048 = _forecast_data_file(case, old_init, 48, dt)
     f024 = _forecast_data_file(case, new_init, 24, dt)
     _validate_outputs((f048, f024))
     context = resolve_context(case, _base_overrides(valid_time, 0, dt))
-    pair_root = Path(_text(context.get("nmc_pair_root"), "context.nmc_pair_root"))
-    pair_dir = pair_root / f"nmc_{context['case_name']}_valid_{valid_time.replace(':', '.')}"
+    root = Path(str(context.get("nmc_pair_root", Path(str(context["work_root"])) / "nmc_pairs" / case.name)))
+    pair_dir = root / f"nmc_{case.name}_valid_{valid_time.replace(':', '.')}"
     pair_dir.mkdir(parents=True, exist_ok=True)
     for source, name in ((f048, "f048.nc"), (f024, "f024.nc")):
         destination = pair_dir / name
