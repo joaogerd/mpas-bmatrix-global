@@ -67,6 +67,11 @@ def toolbox_exe(config) -> Path:
     return require_file(path, "mpasjedi_error_covariance_toolbox.x")
 
 
+def process_perts_exe(config) -> Path:
+    path = Path(config["install"]["root"]) / "bin" / "mpasjedi_process_perts.x"
+    return require_file(path, "mpasjedi_process_perts.x")
+
+
 def vbal_date(vbal_root: str | Path) -> str:
     text = require_file(Path(vbal_root) / "VBAL" / "run_vbal.yaml", "run_vbal.yaml").read_text()
     match = re.search(r"(?m)^\s*date:\s*&date\s+'([^']+)'", text)
