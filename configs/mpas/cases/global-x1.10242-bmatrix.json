@@ -1,0 +1,9 @@
+{
+  "includes": [
+    "global-x1.10242.yaml",
+    "../overlays/monan-jedi.yaml"
+  ],
+  "case": {
+    "name": "global-x1.10242-bmatrix"
+  }
+}
