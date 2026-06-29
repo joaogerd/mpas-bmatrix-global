@@ -6,8 +6,36 @@ from ..shell import write_text
 from .model import STATE_VARIABLES, toolbox_exe
 
 
+def _variables_yaml(indent: str = "  - ") -> str:
+    return "\n".join(f"{indent}{name}" for name in STATE_VARIABLES)
+
+
+def _operators_application_yaml(nmembers: int) -> str:
+    """Generate BUMP operators application entries to materialize K2^-1 samples.
+
+    The MPAS-JEDI 2025 tutorial states that VBAL writes
+    samplesUnbalanced/PTB_f48mf24_###.nc using mpasjedi_error_covariance_toolbox.x.
+    In SABER/BUMP this is done by applying inverseMultiplyVbal to each PTB sample.
+    """
+    blocks: list[str] = []
+    for index in range(1, nmembers + 1):
+        member = f"{index:03d}"
+        blocks.append(
+            f"""      - input:
+          <<: *memberConfig
+          filename: ../samples/PTB_f48mf24_{member}.nc
+        bump operators:
+        - inverseMultiplyVbal
+        output:
+          <<: *memberConfig
+          filename: ../samplesUnbalanced/PTB_f48mf24_{member}.nc"""
+        )
+    return "\n".join(blocks)
+
+
 def write_vbal_yaml(path: Path, nmembers: int, date: str) -> None:
-    variables_yaml = "\n".join(f"  - {name}" for name in STATE_VARIABLES)
+    variables_yaml = _variables_yaml()
+    operators_application = _operators_application_yaml(nmembers)
     text = f"""_member config: &memberConfig
   state variables: &vars
 {variables_yaml}
@@ -68,6 +96,8 @@ background error:
           unbalanced variable: stream_function
         pseudo inverse: true
         dominant mode: 20
+      operators application:
+{operators_application}
 """
     write_text(path, text)
 
@@ -100,6 +130,7 @@ export GFORTRAN_CONVERT_UNIT=big_endian:101-200
 export FI_CXI_RX_MATCH_MODE=hybrid
 ulimit -s unlimited || true
 
+mkdir -p ../samplesUnbalanced
 rm -f run_vbal.runlog stdout.log stderr.log
 mpiexec -n {nproc} {exe} ./run_vbal.yaml ./run_vbal.runlog > stdout.log 2> stderr.log
 """
