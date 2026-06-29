@@ -5,7 +5,7 @@ from pathlib import Path
 
 from ..shell import write_text
 from ..vbal_core.model import vbal_date
-from ..vbal_core.validate import validate as validate_vbal
+from ..vbal_core.processperts import validate_process
 from .config_files import write_hdiag_pbs, write_hdiag_yaml
 from .model import hdiag_workspace, require_hdiag_members
 from .static import link_hdiag_inputs
@@ -13,10 +13,10 @@ from .static import link_hdiag_inputs
 
 def prepare(config, vbal_workspace: str | Path, workspace: str | Path | None = None, clean: bool = False) -> Path:
     vbal_root = Path(vbal_workspace)
-    validate_vbal(vbal_root)
-    samples = sorted((vbal_root / "samples").glob("PTB_f48mf24_*.nc"))
+    validate_process(vbal_root)
+    samples = sorted((vbal_root / "samples_unbalanced").glob("PTB_unbalanced_*.nc"))
     if not samples:
-        raise SystemExit("ERRO: nenhum PTB original encontrado no workspace VBAL.")
+        raise SystemExit("ERRO: nenhuma amostra unbalanced encontrada no workspace VBAL.")
     require_hdiag_members(samples)
 
     out = Path(workspace) if workspace else hdiag_workspace(config, vbal_root)
@@ -30,7 +30,9 @@ def prepare(config, vbal_workspace: str | Path, workspace: str | Path | None = N
     write_hdiag_pbs(config, run_dir)
     write_text(
         out / "README.md",
-        f"# HDIAG/NICAS workspace\n\nVBAL workspace: `{vbal_root}`\nMembers: {len(samples)}\n",
+        f"# HDIAG/NICAS workspace\n\nVBAL workspace: `{vbal_root}`\nMembers: {len(samples)}\n"
+        "\nHDIAG usa as amostras `samples_unbalanced/PTB_unbalanced_%mem%.nc`, "
+        "geradas por `mpasvbal process-*`.\n",
     )
 
     print("=== HDIAG/NICAS workspace ===")
