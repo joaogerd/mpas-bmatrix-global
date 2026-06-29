@@ -2,53 +2,89 @@
 # Site: JACI
 # =============================================================================
 #
-# Propósito
-# ---------
-# Define exclusivamente a infraestrutura compartilhada do ambiente JACI:
-# caminhos de projeto, instalação MPAS, catálogo de malhas e dados WPS_GEOG.
-#
-# Quem altera este arquivo?
-# -------------------------
-# Mantenedores do ambiente ou do repositório. Usuários de experimentos MPAS
-# normalmente não devem editar este arquivo; devem alterar arquivos em
-# configs/mpas/cases/.
-#
-# Os valores entre chaves, por exemplo {project_root}, são placeholders
-# resolvidos pelo renderer antes de gerar namelist e streams.
+# Este perfil usa a árvore institucional do MONAN 1.4.x (MPAS 8.3.1) como
+# fonte compartilhada e somente leitura de geografia WPS. Dados ausentes nessa
+# árvore podem vir de um overlay pessoal; `mpas-assets prepare` monta uma visão
+# de links em data_root sem copiar geotiles.
 # =============================================================================
 
-# Identifica o formato e permite validações futuras de configuração de site.
 schema: workflow-site/v1
 
 site:
-  # Nome lógico do ambiente. Não é um hostname.
   name: jaci
-  # Agendador usado quando uma camada posterior preparar jobs de execução.
   scheduler: pbs
 
-# Contexto compartilhado por todos os casos que incluem este site.
 context:
-  # Raiz pessoal de projetos no filesystem compartilhado do JACI.
   project_root: "/p/projetos/monan_das/$USER"
-
-  # Diretório-base para produtos temporários e resultados de workflows.
+  repository_root: "{project_root}/projects/mpas-bmatrix-global"
   workspace_root: "{project_root}/work"
-  # Diretório-base para dados persistentes usados pelos experimentos.
   data_workspace_root: "{project_root}/data"
-
-  # Catálogo institucional de malhas MPAS quasi-uniformes.
+  work_root: "{workspace_root}/mpas-bmatrix-global"
+  data_root: "{data_workspace_root}/mpas-bmatrix-global"
   mesh_catalog_root: "{project_root}/projects/mpas_meshes/quasi_uniform"
+  gfs_cache_root: "{data_root}/external/gfs"
+  wps_run_root: "{work_root}/wps_ungrib"
+  wps_root: "{data_root}/external/WPS/WPS-4.6.0"
 
-  # Instalação compilada do MONAN-JEDI/MPAS usada pelo renderer.
-  mpas_install_root: "{project_root}/builds/monan-jedi-mpas"
-  # Templates e recursos do executável mpas_init_atmosphere.
-  init_share: "{mpas_install_root}/share/MPAS/core_init_atmosphere"
-  # Templates e recursos do executável mpas_atmosphere.
-  atmosphere_share: "{mpas_install_root}/share/MPAS/core_atmosphere"
-  # Caminhos dos executáveis, usados pela futura preparação de runtime.
-  mpas_init_executable: "{mpas_install_root}/bin/mpas_init_atmosphere"
-  mpas_atmosphere_executable: "{mpas_install_root}/bin/mpas_atmosphere"
+  # Linhagem operacional usada como referência para dados fixos e contratos
+  # MPAS. Os executáveis JEDI continuam declarados em install abaixo.
+  monan_version: "1.4.x"
+  mpas_version: "8.3.1"
+  monan_shared_data_root: "/p/projetos/monan_adm/monan/dados/MONAN_v1.4.x"
+  monan_wps_geog_root: "{monan_shared_data_root}/MONAN_datain/datain/WPS_GEOG"
+  wps_geog_local_overlay: "{data_root}/external/WPS_GEOG/low_res_mandatory/WPS_GEOG_LOW_RES"
+  wps_geog_data_path: "{data_root}/assets/WPS_GEOG/monan-1.4-mpas-8.3.1"
 
-  # Dados geográficos WPS locais para a etapa static do MPAS.
-  # Não deve apontar para o caminho /glade presente em alguns templates NCAR.
-  wps_geog_data_path: "{data_workspace_root}/mpas-bmatrix-global/external/WPS_GEOG/low_res_mandatory/WPS_GEOG_LOW_RES"
+  pbs_queue_static: pesqmini
+  pbs_queue_init: pesqmini
+  pbs_queue_forecast: pesqmidi
+  pbs_walltime_static: "00:20:00"
+  pbs_walltime_init: "00:20:00"
+  pbs_walltime_forecast_f024: "01:00:00"
+  pbs_walltime_forecast_f048: "02:00:00"
+  pbs_walltime_forecast_default: "02:00:00"
+
+assets:
+  wps_geog:
+    profile: "monan-1.4.x-mpas-8.3.1"
+    view_root: "{wps_geog_data_path}"
+    # Primeira fonte tem precedência quando ambas oferecem o mesmo dataset.
+    # O overlay local complementa a árvore institucional com soiltype_bot_30s.
+    sources:
+      - name: monan-1.4-shared
+        root: "{monan_wps_geog_root}"
+      - name: local-overlay
+        root: "{wps_geog_local_overlay}"
+    # Contrato do static para o template MONAN/MPAS 8.3.1. A visão criada pelo
+    # comando inclui também os demais diretórios disponíveis na fonte central.
+    required_files:
+      - topo_gmted2010_30s/index
+      - modis_landuse_20class_30s/index
+      - soiltype_top_30s/index
+      - soiltype_bot_30s/index
+      - soiltemp_1deg/index
+      - maxsnowalb_modis/index
+      - greenfrac_fpar_modis/index
+      - albedo_modis/index
+      - lai_modis_30s/index
+      - soilgrids/soilcomp/index
+      - soilgrids/texture_top/index
+      - soilgrids/texture_bot/index
+      - soilgrids/texture_layer1/index
+      - soilgrids/texture_layer2/index
+      - soilgrids/texture_layer3/index
+      - soilgrids/texture_layer4/index
+
+wps:
+  ungrib_exe: "{wps_root}/ungrib.exe"
+  link_grib: "{wps_root}/link_grib.csh"
+  vtable_gfs: "{wps_root}/ungrib/Variable_Tables/Vtable.GFS"
+
+# A assimilação continua usando a instalação MPAS-JEDI. Ela deve ser compatível
+# com os contratos declarados para a linhagem operacional MONAN/MPAS 8.3.1.
+install:
+  root: "{project_root}/builds/monan-jedi-mpas"
+  mpas_init: mpas_init_atmosphere
+  mpas_atmosphere: mpas_atmosphere
+  init_share: share/MPAS/core_init_atmosphere
+  atmosphere_share: share/MPAS/core_atmosphere

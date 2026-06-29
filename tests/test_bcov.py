@@ -9,7 +9,6 @@ from mpas_workflow.bcov import (
     create_so_background,
     link_static_files,
     link_so_support,
-    nicas_home_failure_files,
     require_hdiag_members,
     submit_nicas,
     submit_nicas_variable,

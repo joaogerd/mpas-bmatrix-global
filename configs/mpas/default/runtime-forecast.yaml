@@ -1,0 +1,36 @@
+stages:
+  forecast:
+    runtime:
+      output_dir: "{runtime_root}/forecast/{safe_time}/f{lead_hours:03d}_dt{dt}_np{nproc}"
+      executable:
+        source: "{mpas_atmosphere_executable}"
+        destination: mpas_atmosphere
+      links:
+        - source: "{render_root}/forecast/{safe_time}/f{lead_hours:03d}_dt{dt}_np{nproc}/namelist.atmosphere"
+          destination: namelist.atmosphere
+        - source: "{render_root}/forecast/{safe_time}/f{lead_hours:03d}_dt{dt}_np{nproc}/streams.atmosphere"
+          destination: streams.atmosphere
+        - source: "{runtime_root}/static/{static_output_name}"
+          destination: "{static_output_name}"
+        - source: "{runtime_root}/static/{surface_update_output_name}"
+          destination: "{surface_update_output_name}"
+        - source: "{runtime_root}/static/{ugwp_oro_output_name}"
+          destination: "{ugwp_oro_output_name}"
+        - source: "{runtime_root}/init/{safe_time}/{init_output_name}"
+          destination: "{init_output_name}"
+        - source: "{grid_path}"
+          destination: "{grid_local_name}"
+        - source: "{graph_path}"
+          destination: "{graph_basename}"
+        - source: "{partition_path}"
+          destination: "{graph_basename}.part.{nproc}"
+        - source: "{project_root}/external-inputs/mpasjedi_tutorial202509NCAR/MPAS_namelist_stream_physics_files/stream_list.atmosphere.analysis"
+          destination: stream_list.atmosphere.analysis
+        - source: "{project_root}/external-inputs/mpasjedi_tutorial202509NCAR/MPAS_namelist_stream_physics_files/stream_list.atmosphere.background"
+          destination: stream_list.atmosphere.background
+        - source: "{project_root}/external-inputs/mpasjedi_tutorial202509NCAR/MPAS_namelist_stream_physics_files/stream_list.atmosphere.control"
+          destination: stream_list.atmosphere.control
+        - source: "{project_root}/external-inputs/mpasjedi_tutorial202509NCAR/MPAS_namelist_stream_physics_files/stream_list.atmosphere.ensemble"
+          destination: stream_list.atmosphere.ensemble
+      expected_outputs:
+        - "{restart_filename}"

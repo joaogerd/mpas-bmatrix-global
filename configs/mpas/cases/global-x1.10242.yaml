@@ -6,13 +6,13 @@
 # ---------
 # Este é o arquivo que um usuário normalmente copia para criar uma nova malha
 # ou um novo experimento MPAS global. Ele contém somente escolhas que variam
-# entre casos; o contrato detalhado de static, init e forecast permanece em
+# entre casos; os contratos detalhados de renderização e runtime permanecem em
 # configs/mpas/default/.
 #
 # Como usar
 # ---------
-# O renderer recebe este arquivo com, por exemplo:
-#   bash scripts/mpas-render --case configs/mpas/cases/global-x1.10242.yaml ...
+# Renderização:  bash scripts/mpas-render --case <este-arquivo> ...
+# Runtime:       bash scripts/mpas-stage-prepare --case <este-arquivo> ...
 #
 # Ordem dos includes
 # ------------------
@@ -29,9 +29,14 @@ includes:
   - ../default/static.yaml
   - ../default/init.yaml
   - ../default/forecast.yaml
+  # Contratos declarativos de runtime; não executam MPAS nem PBS.
+  - ../default/runtime-common.yaml
+  - ../default/runtime-static.yaml
+  - ../default/runtime-init.yaml
+  - ../default/runtime-forecast.yaml
 
 case:
-  # Identificador usado em manifestos e no diretório render_root.
+  # Identificador usado em manifestos e no diretório render_root/runtime_root.
   name: global-x1.10242
   # Texto descritivo; não é lido pelo executável MPAS.
   description: Global quasi-uniform MPAS-Atmosphere case at approximately 240 km

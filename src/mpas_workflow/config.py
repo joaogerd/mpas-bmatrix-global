@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict
 import os
@@ -10,13 +9,20 @@ try:
 except ImportError as exc:
     raise SystemExit("ERRO: PyYAML não encontrado. Use: python -m pip install --user pyyaml") from exc
 
+from .install_paths import InstallPathError, resolve_install_paths
+
 
 def load_config(path: str | Path) -> Dict[str, Any]:
     path = Path(path)
     if not path.exists():
         raise SystemExit(f"ERRO: configuração não encontrada: {path}")
-    data = yaml.safe_load(path.read_text()) or {}
-    return expand_env(data)
+    data = expand_env(yaml.safe_load(path.read_text()) or {})
+    if "install" in data:
+        try:
+            data["install"] = resolve_install_paths(data["install"])
+        except InstallPathError as exc:
+            raise SystemExit(f"ERRO: configuração install inválida: {exc}") from exc
+    return data
 
 
 def expand_env(obj):

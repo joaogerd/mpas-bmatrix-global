@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+#
+# Prepara um diretório de runtime MPAS a partir de um caso YAML renderizado.
+# Não executa MPAS nem submete PBS.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+
+export PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
+
+PYTHON=${PYTHON:-python3}
+exec "${PYTHON}" -m mpas_workflow.runtime_prepare_cli "$@"

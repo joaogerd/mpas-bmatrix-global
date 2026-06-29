@@ -1,0 +1,20 @@
+# =============================================================================
+# MPAS runtime defaults: convenções comuns
+# =============================================================================
+#
+# Propósito
+# ---------
+# Define apenas caminhos compartilhados pelo preparador de runtime. O runtime
+# recebe links para insumos já existentes; este arquivo não baixa nem gera
+# dados e não executa o MPAS.
+#
+# `wps_input_dir` pode ser sobrescrito com --set quando os FILE:* forem
+# produzidos em outro local.
+# =============================================================================
+
+context:
+  # Diretório-raiz dos diretórios executáveis preparados por estágio.
+  runtime_root: "{work_root}/mpas-runtime/{case_name}"
+  # Local canônico esperado para FILE:* de um ciclo. O preparador init valida
+  # esse diretório apenas quando for solicitado.
+  wps_input_dir: "{work_root}/wps/{safe_time}"

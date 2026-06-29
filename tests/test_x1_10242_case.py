@@ -24,7 +24,10 @@ def test_public_case_declares_all_mpas_stages_and_runtime_context():
     assert context["mesh_resolution_km"] == 240
     assert context["nvertlevels"] == 55
     assert context["init_output_name"] == "x1.10242.init.2026-06-12_00.00.00.nc"
-    assert context["wps_geog_data_path"].endswith("WPS_GEOG_LOW_RES")
+    assert context["monan_version"] == "1.4.x"
+    assert context["mpas_version"] == "8.3.1"
+    assert context["monan_wps_geog_root"].endswith("MONAN_datain/datain/WPS_GEOG")
+    assert context["wps_geog_data_path"].endswith("assets/WPS_GEOG/monan-1.4-mpas-8.3.1")
 
 
 def test_public_case_plans_all_stages_without_internal_fragments(tmp_path: Path):

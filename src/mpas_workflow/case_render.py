@@ -17,8 +17,6 @@ from xml.etree import ElementTree as ET
 
 from .case_config import (
     CaseConfig,
-    CaseConfigError,
-    load_case_config,
     resolve_context,
     resolve_structure,
 )

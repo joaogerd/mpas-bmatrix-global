@@ -1,0 +1,48 @@
+# =============================================================================
+# MPAS runtime defaults: init
+# =============================================================================
+#
+# Propósito
+# ---------
+# Declara o diretório de runtime que produz init.nc. O estágio requer os
+# produtos do runtime static e os arquivos FILE:* do WPS. O preparador valida
+# todos os insumos antes de criar qualquer link.
+# =============================================================================
+
+stages:
+  init:
+    runtime:
+      output_dir: "{runtime_root}/init/{safe_time}"
+      executable:
+        source: "{mpas_init_executable}"
+        destination: mpas_init_atmosphere
+      required_directories:
+        # Pode ser sobrescrito: --set wps_input_dir=/caminho/para/FILE
+        - "{wps_input_dir}"
+      links:
+        # Artefatos do renderer para este ciclo.
+        - source: "{render_root}/init/{safe_time}/namelist.init_atmosphere"
+          destination: namelist.init_atmosphere
+        - source: "{render_root}/init/{safe_time}/streams.init_atmosphere"
+          destination: streams.init_atmosphere
+        # Produtos permanentes gerados pelo estágio static.
+        - source: "{runtime_root}/static/{static_output_name}"
+          destination: "{static_output_name}"
+        - source: "{runtime_root}/static/{surface_update_output_name}"
+          destination: "{surface_update_output_name}"
+        - source: "{runtime_root}/static/{ugwp_oro_output_name}"
+          destination: "{ugwp_oro_output_name}"
+        # Geometria, grafo e partição da malha.
+        - source: "{grid_path}"
+          destination: "{grid_local_name}"
+        - source: "{graph_path}"
+          destination: "{graph_basename}"
+        - source: "{partition_path}"
+          destination: "{graph_basename}.part.{nproc}"
+      # FILE:* é variado por ciclo; cada arquivo é ligado com seu basename.
+      globs:
+        - pattern: "{wps_input_dir}/FILE:*"
+          destination_dir: .
+          min_matches: 1
+      expected_outputs:
+        - "{init_output_name}"

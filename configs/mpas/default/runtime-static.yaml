@@ -1,0 +1,52 @@
+# =============================================================================
+# MPAS runtime defaults: static
+# =============================================================================
+#
+# O estágio static usa uma visão WPS_GEOG preparada por `mpas-assets` a partir
+# da árvore compartilhada MONAN e, quando necessário, de um overlay local.
+# Nenhum geotile é copiado para o diretório de runtime.
+# =============================================================================
+
+stages:
+  static:
+    runtime:
+      output_dir: "{runtime_root}/static"
+      executable:
+        source: "{mpas_init_executable}"
+        destination: mpas_init_atmosphere
+      required_directories:
+        - "{wps_geog_data_path}"
+      # Mantido no contrato de runtime para que `mpas-stage-prepare` também
+      # recuse um caso incompleto, mesmo quando chamado sem `mpas-cycle`.
+      required_files:
+        - "{wps_geog_data_path}/topo_gmted2010_30s/index"
+        - "{wps_geog_data_path}/modis_landuse_20class_30s/index"
+        - "{wps_geog_data_path}/soiltype_top_30s/index"
+        - "{wps_geog_data_path}/soiltype_bot_30s/index"
+        - "{wps_geog_data_path}/soiltemp_1deg/index"
+        - "{wps_geog_data_path}/maxsnowalb_modis/index"
+        - "{wps_geog_data_path}/greenfrac_fpar_modis/index"
+        - "{wps_geog_data_path}/albedo_modis/index"
+        - "{wps_geog_data_path}/lai_modis_30s/index"
+        - "{wps_geog_data_path}/soilgrids/soilcomp/index"
+        - "{wps_geog_data_path}/soilgrids/texture_top/index"
+        - "{wps_geog_data_path}/soilgrids/texture_bot/index"
+        - "{wps_geog_data_path}/soilgrids/texture_layer1/index"
+        - "{wps_geog_data_path}/soilgrids/texture_layer2/index"
+        - "{wps_geog_data_path}/soilgrids/texture_layer3/index"
+        - "{wps_geog_data_path}/soilgrids/texture_layer4/index"
+      links:
+        - source: "{render_root}/static/namelist.init_atmosphere"
+          destination: namelist.init_atmosphere
+        - source: "{render_root}/static/streams.init_atmosphere"
+          destination: streams.init_atmosphere
+        - source: "{grid_path}"
+          destination: "{grid_local_name}"
+        - source: "{graph_path}"
+          destination: "{graph_basename}"
+        - source: "{partition_path}"
+          destination: "{graph_basename}.part.{nproc}"
+      expected_outputs:
+        - "{static_output_name}"
+        - "{surface_update_output_name}"
+        - "{ugwp_oro_output_name}"
