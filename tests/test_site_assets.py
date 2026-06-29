@@ -21,6 +21,8 @@ def asset_case(tmp_path: Path, *, include_overlay: bool = True) -> Path:
     overlay = tmp_path / "overlay"
     view = tmp_path / "view"
 
+    shared.mkdir(parents=True)
+    overlay.mkdir(parents=True)
     write(shared / "topo_gmted2010_30s" / "index")
     write(shared / "soilgrids" / "soilcomp" / "index")
     if include_overlay:
