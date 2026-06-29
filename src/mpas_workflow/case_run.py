@@ -14,6 +14,20 @@ from .shell import qsub, wait_for_pbs_job
 
 
 TIME_FORMAT = "%Y-%m-%d_%H:%M:%S"
+STATIC_GEOTILE_INDEXES = (
+    "topo_gmted2010_30s/index",
+    "modis_landuse_20class_5m_with_lakes/index",
+    "soiltype_top_5m/index",
+    "soiltype_bot_5m/index",
+    "greenfrac_fpar_modis_5m/index",
+    "albedo_modis/index",
+    "maxsnowalb_modis/index",
+)
+FORECAST_PHYSICS_FILES = (
+    "CAM_ABS_DATA.DBL", "CAM_AEROPT_DATA.DBL", "GENPARM.TBL", "LANDUSE.TBL",
+    "OZONE_DAT.TBL", "RRTMG_LW_DATA", "RRTMG_LW_DATA.DBL", "RRTMG_SW_DATA",
+    "RRTMG_SW_DATA.DBL", "SOILPARM.TBL", "VEGPARM.TBL", "VERSION",
+)
 
 
 class CaseRunError(ValueError):
@@ -76,19 +90,9 @@ def _outputs(stage: Mapping[str, Any], context: Mapping[str, Any]) -> tuple[Path
 
 def _default_execution(context: Mapping[str, Any], stage_name: str) -> dict[str, Any]:
     names = {"static": "mstatic10242", "init": "minit10242", "forecast": "mfcst10242"}
-    queues = {
-        "static": context.get("pbs_queue_static", "pesqmini"),
-        "init": context.get("pbs_queue_init", "pesqmini"),
-        "forecast": context.get("pbs_queue_forecast", "pesqmidi"),
-    }
+    queues = {"static": context.get("pbs_queue_static", "pesqmini"), "init": context.get("pbs_queue_init", "pesqmini"), "forecast": context.get("pbs_queue_forecast", "pesqmidi")}
     if stage_name == "forecast":
-        walltime: Any = {
-            "default": context.get("pbs_walltime_forecast_default", "02:00:00"),
-            "by_lead_hours": {
-                "24": context.get("pbs_walltime_forecast_f024", "01:00:00"),
-                "48": context.get("pbs_walltime_forecast_f048", "02:00:00"),
-            },
-        }
+        walltime: Any = {"default": context.get("pbs_walltime_forecast_default", "02:00:00"), "by_lead_hours": {"24": context.get("pbs_walltime_forecast_f024", "01:00:00"), "48": context.get("pbs_walltime_forecast_f048", "02:00:00")}}
     else:
         walltime = context.get(f"pbs_walltime_{stage_name}", "00:20:00")
     return {"job_name": names.get(stage_name, f"mpas_{stage_name}"), "queue": queues.get(stage_name, "pesqmini"), "walltime": walltime}
@@ -98,9 +102,7 @@ def _execution(context: Mapping[str, Any], stage_name: str, stage: Mapping[str, 
     raw = stage.get("execution")
     if raw is None:
         return _default_execution(context, stage_name)
-    configured = dict(_mapping(raw, "stage.execution"))
-    defaults = _default_execution(context, stage_name)
-    return {**defaults, **configured}
+    return {**_default_execution(context, stage_name), **dict(_mapping(raw, "stage.execution"))}
 
 
 def _walltime(execution: Mapping[str, Any], lead_hours: int) -> str:
@@ -124,29 +126,22 @@ def _pbs_text(*, context: Mapping[str, Any], stage_name: str, stage: Mapping[str
     nproc = int(context.get("nproc", 0))
     if nproc <= 0:
         raise CaseRunError("context.nproc deve ser positivo.")
-    job_name = _text(execution.get("job_name"), "execution.job_name")
-    queue = _text(execution.get("queue"), "execution.queue")
-    walltime = _walltime(execution, lead_hours)
-    repo = _text(context.get("repository_root"), "context.repository_root")
-    local_executable = _text(executable.get("destination"), "runtime.executable.destination")
     return f"""#!/bin/bash
-#PBS -N {job_name}
-#PBS -q {queue}
+#PBS -N {_text(execution.get('job_name'), 'execution.job_name')}
+#PBS -q {_text(execution.get('queue'), 'execution.queue')}
 #PBS -l select=1:ncpus={nproc}:mpiprocs={nproc}
-#PBS -l walltime={walltime}
+#PBS -l walltime={_walltime(execution, lead_hours)}
 #PBS -j oe
 
 set -euo pipefail
-source \"{repo}/scripts/load_jaci_env.sh\"
+source \"{_text(context.get('repository_root'), 'context.repository_root')}/scripts/load_jaci_env.sh\"
 cd \"{runtime_dir}\"
-
 export OMP_NUM_THREADS=1
 export FI_CXI_RX_MATCH_MODE=hybrid
 export GFORTRAN_CONVERT_UNIT=big_endian:101-200
 ulimit -s unlimited || true
-
 rm -f stdout.{stage_name}.log stderr.{stage_name}.log
-mpiexec -n {nproc} \"./{local_executable}\" > stdout.{stage_name}.log 2> stderr.{stage_name}.log
+mpiexec -n {nproc} \"./{_text(executable.get('destination'), 'runtime.executable.destination')}\" > stdout.{stage_name}.log 2> stderr.{stage_name}.log
 """
 
 
@@ -155,6 +150,30 @@ def _write_pbs(context: Mapping[str, Any], stage_name: str, stage: Mapping[str, 
     path = runtime_dir / f"run_mpas_{stage_name}.pbs"
     path.write_text(_pbs_text(context=context, stage_name=stage_name, stage=stage, runtime_dir=runtime_dir, lead_hours=lead_hours))
     return path
+
+
+def _validate_static_geography(context: Mapping[str, Any]) -> None:
+    root = Path(_text(context.get("wps_geog_data_path"), "context.wps_geog_data_path"))
+    missing = [root / item for item in STATIC_GEOTILE_INDEXES if not (root / item).is_file()]
+    if missing:
+        raise CaseRunError("WPS_GEOG incompleto para static:\n" + "\n".join(f"- {path}" for path in missing))
+
+
+def _safe_link(source: Path, destination: Path) -> None:
+    if not source.is_file():
+        raise CaseRunError(f"Arquivo físico do MPAS ausente: {source}")
+    if destination.is_symlink() and destination.resolve() == source.resolve():
+        return
+    if destination.exists() or destination.is_symlink():
+        raise CaseRunError(f"Destino de runtime incompatível: {destination}")
+    destination.symlink_to(source)
+
+
+def _link_forecast_assets(context: Mapping[str, Any], runtime_dir: Path) -> None:
+    _safe_link(Path(_text(context.get("grid_path"), "context.grid_path")), runtime_dir / _text(context.get("grid_local_name"), "context.grid_local_name"))
+    share = Path(_text(context.get("atmosphere_share"), "context.atmosphere_share"))
+    for name in FORECAST_PHYSICS_FILES:
+        _safe_link(share / name, runtime_dir / name)
 
 
 def _remove_outputs(outputs: tuple[Path, ...]) -> None:
@@ -181,7 +200,8 @@ def ensure_stage(case: CaseConfig, stage_name: str, *, init_time: str, lead_hour
     if not force and all(path.is_file() and path.stat().st_size > 0 for path in outputs):
         print(f"OK: estágio {stage_name} já concluído: {outputs[0]}")
         return True
-
+    if stage_name == "static":
+        _validate_static_geography(context)
     if stage_name == "init":
         file_path = ensure_wps_file(case, init_time, overrides=overrides, download=download)
         overrides["wps_input_dir"] = str(file_path.parent)
@@ -189,15 +209,15 @@ def ensure_stage(case: CaseConfig, stage_name: str, *, init_time: str, lead_hour
         outputs = _outputs(stage, context)
     if force:
         _remove_outputs(outputs)
-
     render_stage(case, stage_name, overrides=overrides)
     prepared = prepare_stage(case, stage_name, overrides=overrides)
+    if stage_name == "forecast":
+        _link_forecast_assets(context, prepared.output_dir)
     pbs = _write_pbs(context, stage_name, stage, lead_hours)
     print(f"OK: runtime {stage_name} preparado: {prepared.output_dir}")
     print(f"PBS={pbs}")
     if not submit:
         return False
-
     jobid = qsub(pbs.name, prepared.output_dir)
     print(f"JOBID={jobid}")
     if not wait:
@@ -225,7 +245,7 @@ def _forecast_data_file(case: CaseConfig, init_time: str, lead_hours: int, dt: i
     streams = _mapping(_mapping(stage.get("streams"), "forecast.streams").get("streams"), "forecast.streams.streams")
     attrs = _mapping(_mapping(streams.get("da_state", {}), "forecast.streams.da_state").get("attributes", {}), "forecast.streams.da_state.attributes")
     if attrs.get("type") != "output":
-        raise CaseRunError("O caso não ativa da_state; use o caso MONAN-JEDI para produzir pares NMC da matriz B.")
+        raise CaseRunError("O caso não ativa da_state; use o overlay MONAN-JEDI para produzir pares NMC da matriz B.")
     return _runtime_dir(stage) / _expand_mpas_time(_text(attrs.get("filename_template"), "da_state.filename_template"), _text(context.get("valid_time"), "context.valid_time"))
 
 
