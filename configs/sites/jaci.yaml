@@ -1,3 +1,13 @@
+# =============================================================================
+# Site: JACI
+# =============================================================================
+#
+# Este perfil usa a árvore institucional do MONAN 1.4.x (MPAS 8.3.1) como
+# fonte compartilhada e somente leitura de geografia WPS. Dados ausentes nessa
+# árvore podem vir de um overlay pessoal; `mpas-assets prepare` monta uma visão
+# de links em data_root sem copiar geotiles.
+# =============================================================================
+
 schema: workflow-site/v1
 
 site:
@@ -15,7 +25,16 @@ context:
   gfs_cache_root: "{data_root}/external/gfs"
   wps_run_root: "{work_root}/wps_ungrib"
   wps_root: "{data_root}/external/WPS/WPS-4.6.0"
-  wps_geog_data_path: "{data_root}/external/WPS_GEOG/low_res_mandatory/WPS_GEOG_LOW_RES"
+
+  # Linhagem operacional usada como referência para dados fixos e contratos
+  # MPAS. Os executáveis JEDI continuam declarados em install abaixo.
+  monan_version: "1.4.x"
+  mpas_version: "8.3.1"
+  monan_shared_data_root: "/p/projetos/monan_adm/monan/dados/MONAN_v1.4.x"
+  monan_wps_geog_root: "{monan_shared_data_root}/MONAN_datain/datain/WPS_GEOG"
+  wps_geog_local_overlay: "{data_root}/external/WPS_GEOG/low_res_mandatory/WPS_GEOG_LOW_RES"
+  wps_geog_data_path: "{data_root}/assets/WPS_GEOG/monan-1.4-mpas-8.3.1"
+
   pbs_queue_static: pesqmini
   pbs_queue_init: pesqmini
   pbs_queue_forecast: pesqmidi
@@ -25,11 +44,44 @@ context:
   pbs_walltime_forecast_f048: "02:00:00"
   pbs_walltime_forecast_default: "02:00:00"
 
+assets:
+  wps_geog:
+    profile: "monan-1.4.x-mpas-8.3.1"
+    view_root: "{wps_geog_data_path}"
+    # Primeira fonte tem precedência quando ambas oferecem o mesmo dataset.
+    # O overlay local complementa a árvore institucional com soiltype_bot_30s.
+    sources:
+      - name: monan-1.4-shared
+        root: "{monan_wps_geog_root}"
+      - name: local-overlay
+        root: "{wps_geog_local_overlay}"
+    # Contrato do static para o template MONAN/MPAS 8.3.1. A visão criada pelo
+    # comando inclui também os demais diretórios disponíveis na fonte central.
+    required_files:
+      - topo_gmted2010_30s/index
+      - modis_landuse_20class_30s/index
+      - soiltype_top_30s/index
+      - soiltype_bot_30s/index
+      - soiltemp_1deg/index
+      - maxsnowalb_modis/index
+      - greenfrac_fpar_modis/index
+      - albedo_modis/index
+      - lai_modis_30s/index
+      - soilgrids/soilcomp/index
+      - soilgrids/texture_top/index
+      - soilgrids/texture_bot/index
+      - soilgrids/texture_layer1/index
+      - soilgrids/texture_layer2/index
+      - soilgrids/texture_layer3/index
+      - soilgrids/texture_layer4/index
+
 wps:
   ungrib_exe: "{wps_root}/ungrib.exe"
   link_grib: "{wps_root}/link_grib.csh"
   vtable_gfs: "{wps_root}/ungrib/Variable_Tables/Vtable.GFS"
 
+# A assimilação continua usando a instalação MPAS-JEDI. Ela deve ser compatível
+# com os contratos declarados para a linhagem operacional MONAN/MPAS 8.3.1.
 install:
   root: "{project_root}/builds/monan-jedi-mpas"
   mpas_init: mpas_init_atmosphere
