@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..mpas_init import init_file
 from ..pbs import mpas_forecast_pbs
 from ..shell import require_file, symlink_force, write_text
 from .checks import check_forecast_setup
 from .cleanup import clean_forecast_run_dir
+from .init import init_file
 from .model import bflow_file, forecast_run_dir, restart_file
 from .streams import copy_tutorial_stream_lists, patch_namelist, prepare_streams, tutorial_physics_dir
 
