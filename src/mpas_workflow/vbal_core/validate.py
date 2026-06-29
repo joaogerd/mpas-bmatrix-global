@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 def validate(workspace: str | Path) -> bool:
-    """Validate the VBAL products and logs."""
+    """Validate the VBAL calibration products and logs."""
     root = Path(workspace)
     run_dir = root / "VBAL"
     log = run_dir / "run_vbal.runlog"
@@ -17,7 +17,7 @@ def validate(workspace: str | Path) -> bool:
     global_products = [run_dir / "mpas_sampling.nc", run_dir / "mpas_vbal.nc"]
     sampling_local = sorted(run_dir.glob("mpas_sampling_local_*"))
     vbal_local = sorted(run_dir.glob("mpas_vbal_local_*"))
-    legacy_outputs = sorted((root / "samplesUnbalanced").glob("PTB_f48mf24_*.nc"))
+    unbalanced_outputs = sorted((root / "samples_unbalanced").glob("PTB_unbalanced_*.nc"))
 
     if not log.is_file():
         errors.append("run_vbal.runlog ausente")
@@ -36,10 +36,10 @@ def validate(workspace: str | Path) -> bool:
     print(f"VBAL_GLOBAL={(run_dir / 'mpas_vbal.nc').is_file()}")
     print(f"SAMPLING_LOCAL={len(sampling_local)}")
     print(f"VBAL_LOCAL={len(vbal_local)}")
-    print(f"LEGACY_UNBALANCED_SAMPLES={len(legacy_outputs)}")
-    if not legacy_outputs:
-        print("Este build SABER nao escreve output ensemble no VBAL. Isso e esperado neste fluxo.")
-        print("A proxima etapa deve usar os PTBs originais com BUMP_VerticalBalance em modo read.")
+    print(f"UNBALANCED_SAMPLES={len(unbalanced_outputs)}")
+    if not unbalanced_outputs:
+        print("VBAL calibrou o operador K2, mas ainda não materializou K2^-1(PTB).")
+        print("Use: mpasvbal process-prepare/process-submit/process-validate")
 
     if errors:
         print("Problemas:")
@@ -48,7 +48,7 @@ def validate(workspace: str | Path) -> bool:
         print_diagnostics(root)
         raise SystemExit("ERRO: VBAL falhou ou ficou incompleto.")
 
-    print("SUCCESS: VBAL validado.")
+    print("SUCCESS: VBAL calibration validada.")
     return True
 
 
