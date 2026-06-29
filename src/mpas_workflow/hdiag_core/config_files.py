@@ -33,7 +33,7 @@ background error:
     members from template:
       template:
         <<: *memberConfig
-        filename: ../samples/PTB_f48mf24_%mem%.nc
+        filename: ../samples_unbalanced/PTB_unbalanced_%mem%.nc
       pattern: '%mem%'
       nmembers: {nmembers}
       zero padding: 3
@@ -83,25 +83,6 @@ background error:
           filename: ./mpas.cor_rv.nc
           date: *date
           stream name: control
-
-  saber outer blocks:
-  - saber block name: BUMP_VerticalBalance
-    read:
-      io:
-        data directory: ../vbal
-        files prefix: mpas
-      drivers:
-        read local sampling: true
-        read vertical balance: true
-      vertical balance:
-        vbal:
-        - balanced variable: velocity_potential
-          unbalanced variable: stream_function
-          diagonal regression: true
-        - balanced variable: temperature
-          unbalanced variable: stream_function
-        - balanced variable: surface_pressure
-          unbalanced variable: stream_function
 """
     write_text(path, text)
 
