@@ -31,6 +31,7 @@ dev = [
 mpas-render = "mpas_workflow.case_render_cli:main"
 mpas-stage-prepare = "mpas_workflow.runtime_prepare_cli:main"
 mpas-cycle = "mpas_workflow.case_run_cli:main"
+mpas-assets = "mpas_workflow.site_assets_cli:main"
 mpaswf = "mpas_workflow.cli:main"
 mpaswf-cycle-range = "mpas_workflow.cycle_range:main"
 mpasbm = "mpas_workflow.bmatrix:main"
