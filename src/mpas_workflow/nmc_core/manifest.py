@@ -25,13 +25,14 @@ def read_manifest(path: str | Path) -> list[NMCManifestPair]:
                 f"NMC manifest {path} must have tab-separated columns: valid_time, f048, f024."
             )
         for index, row in enumerate(reader, start=2):
+            raw_valid = (row.get("valid_time") or "").strip()
+            raw_f048 = (row.get("f048") or "").strip()
+            raw_f024 = (row.get("f024") or "").strip()
+            if not raw_f048 or not raw_f024:
+                raise ManifestError(f"NMC manifest {path}:{index} has an empty f048 or f024 path.")
             try:
-                valid_time = normalize_time((row.get("valid_time") or "").strip())
+                valid_time = normalize_time(raw_valid)
             except ValueError as error:
                 raise ManifestError(f"Invalid valid_time at {path}:{index}: {error}") from error
-            f048 = Path((row.get("f048") or "").strip())
-            f024 = Path((row.get("f024") or "").strip())
-            if not str(f048) or not str(f024):
-                raise ManifestError(f"NMC manifest {path}:{index} has an empty f048 or f024 path.")
-            pairs.append(NMCManifestPair(valid_time, f048, f024))
+            pairs.append(NMCManifestPair(valid_time, Path(raw_f048), Path(raw_f024)))
     return pairs
