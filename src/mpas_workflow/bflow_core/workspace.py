@@ -2,17 +2,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..shell import require_file, symlink_force, write_text
+from ..nmc_core.checks import validate_pairs as validate_nmc_pairs
+from ..nmc_core.model import MINIMUM_PAIRS, NMCManifestPair
+from ..shell import symlink_force, write_text
 from .manifest import write_manifest
 from .model import BflowPair, compact_time
 
 
-def validate_pairs(pairs: list[BflowPair]) -> None:
-    if not pairs:
-        raise SystemExit("ERRO: nenhum par Bflow encontrado.")
-    for pair in pairs:
-        require_file(pair.f048, f"f048 para {pair.valid_time}")
-        require_file(pair.f024, f"f024 para {pair.valid_time}")
+def validate_pairs(pairs: list[BflowPair], *, minimum_pairs: int = MINIMUM_PAIRS) -> None:
+    """Reject incomplete, duplicate or missing f048/f024 inputs before BFLOW."""
+    validate_nmc_pairs(
+        [NMCManifestPair(pair.valid_time, pair.f048, pair.f024) for pair in pairs],
+        minimum_pairs=minimum_pairs,
+    )
 
 
 def link_pair_inputs(workspace: Path, pairs: list[BflowPair]) -> None:
@@ -51,13 +53,19 @@ def write_readme(workspace: Path, pairs: list[BflowPair]) -> None:
     write_text(workspace / "README.md", "\n".join(lines) + "\n")
 
 
-def prepare_workspace(config, pairs: list[BflowPair], workspace: Path, force: bool = False) -> Path:
+def prepare_workspace(
+    config,
+    pairs: list[BflowPair],
+    workspace: Path,
+    force: bool = False,
+    minimum_pairs: int = MINIMUM_PAIRS,
+) -> Path:
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "scripts").mkdir(exist_ok=True)
     (workspace / "logs").mkdir(exist_ok=True)
     (workspace / "output").mkdir(exist_ok=True)
 
-    validate_pairs(pairs)
+    validate_pairs(pairs, minimum_pairs=minimum_pairs)
     write_manifest(workspace / "manifest.tsv", pairs)
     link_pair_inputs(workspace, pairs)
     write_readme(workspace, pairs)
