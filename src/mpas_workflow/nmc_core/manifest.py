@@ -35,4 +35,6 @@ def read_manifest(path: str | Path) -> list[NMCManifestPair]:
             except ValueError as error:
                 raise ManifestError(f"Invalid valid_time at {path}:{index}: {error}") from error
             pairs.append(NMCManifestPair(valid_time, Path(raw_f048), Path(raw_f024)))
+    if not pairs:
+        raise ManifestError(f"NMC manifest has no pair rows: {path}")
     return pairs
