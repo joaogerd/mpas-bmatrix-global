@@ -72,6 +72,91 @@ def plot_explained(vbal, output, dpi):
     return output
 
 
+def plot_regression(vbal, output, target_lat, dpi):
+    """Render the vertical regression with filled contours and a separate colorbar."""
+    base.style()
+    lat = base.latitudes(vbal)
+    with base.netCDF4.Dataset(base.require(vbal / "VBAL/mpas_vbal.nc")) as ds:
+        name, variable = base.group_variable(ds, "stream_function-temperature", "reg")
+        values = base.clean(variable[:])
+
+    if values.ndim != 3:
+        raise ValueError(f"Expected a 3-D regression product, got {values.shape}")
+
+    index = int(np.nanargmin(np.abs(lat - target_lat)))
+    if values.shape[-1] == lat.size:
+        matrix = values[:, :, index]
+    elif values.shape[0] == lat.size:
+        matrix = values[index, :, :]
+    else:
+        raise ValueError(f"Latitude length {lat.size} is incompatible with {values.shape}")
+
+    finite = np.abs(matrix[np.isfinite(matrix)])
+    if not finite.size:
+        raise ValueError("Selected regression matrix has no finite values")
+    amplitude = float(np.nanpercentile(finite, 98.0))
+    if not np.isfinite(amplitude) or amplitude <= 0.0:
+        amplitude = float(np.nanmax(finite))
+
+    levels_fill = np.linspace(-amplitude, amplitude, 17)
+    levels_line = np.linspace(-amplitude, amplitude, 9)
+    fig = base.plt.figure(figsize=(8.8, 6.8))
+    grid = fig.add_gridspec(
+        1,
+        2,
+        width_ratios=[1.0, 0.055],
+        wspace=0.08,
+        left=0.10,
+        right=0.93,
+        bottom=0.10,
+        top=0.86,
+    )
+    axis = fig.add_subplot(grid[0, 0])
+    colorbar_axis = fig.add_subplot(grid[0, 1])
+    fig.suptitle(rf"Regressão vertical $T \leftarrow \psi$ — {lat[index]:.1f}°", fontsize=17, y=0.94)
+
+    x = np.arange(matrix.shape[1])
+    y = np.arange(matrix.shape[0])
+    filled = axis.contourf(
+        x,
+        y,
+        matrix,
+        levels=levels_fill,
+        cmap="coolwarm",
+        extend="both",
+        antialiased=True,
+    )
+    contour_levels = levels_line[np.abs(levels_line) > max(amplitude * 0.05, np.finfo(float).eps)]
+    lines = axis.contour(
+        x,
+        y,
+        matrix,
+        levels=contour_levels,
+        colors="#334155",
+        linewidths=0.45,
+        alpha=0.45,
+    )
+    axis.clabel(lines, inline=True, fontsize=6, fmt="%.1e", colors="#475569")
+    axis.contour(
+        x,
+        y,
+        matrix,
+        levels=[0.0],
+        colors=base.FG,
+        linewidths=1.0,
+        alpha=0.75,
+    )
+    axis.set_xlabel(r"Nível de $\psi$")
+    axis.set_ylabel(r"Nível de $T$")
+
+    colorbar = fig.colorbar(filled, cax=colorbar_axis)
+    colorbar.set_label("Coeficiente de regressão", labelpad=12)
+    base.plt.setp(colorbar.ax.get_yticklabels(), color=base.MUTED)
+    fig.savefig(output, dpi=dpi, transparent=True, bbox_inches="tight")
+    base.plt.close(fig)
+    return output
+
+
 def plot_dirac(dirac, output, level, dpi, explicit):
     """Plot DIRAC response with a dedicated colorbar column outside the panels."""
     base.style()
@@ -178,5 +263,6 @@ def plot_dirac(dirac, output, level, dpi, explicit):
 
 def main(argv=None):
     base.plot_explained = plot_explained
+    base.plot_regression = plot_regression
     base.plot_dirac = plot_dirac
     return base.main(argv)
