@@ -1,10 +1,10 @@
 # Figuras da matriz B para apresentação
 
-Este comando produz um conjunto curto de figuras científicas para apresentação a partir da primeira matriz B diagnosticada no JACI. O desenho usa fundo escuro, eixos de alto contraste e os acentos azul, verde-água, laranja e magenta adotados nas figuras da apresentação MONAN-JEDI.
+Este comando produz um conjunto curto de figuras científicas para apresentação a partir da primeira matriz B diagnosticada no JACI. Os PNGs têm fundo transparente, texto cinza-escuro, grade cinza-clara e acentos azul, verde-água, laranja e magenta, para inserção direta nos slides.
 
 ## Escopo científico
 
-Os quatro produtos resumem componentes complementares da matriz estática
+Os quatro produtos resumem componentes complementares da matriz estática:
 
 ```text
 B = K1 K2 Sigma C Sigma^T K2^T K1^T
@@ -19,6 +19,10 @@ As duas primeiras figuras correspondem aos diagnósticos de balanço VBAL. A ter
 
 > **Cuidado:** o caso `np128_2026061000_2026061300` é o baseline/smoke inicial, com poucos membros. As figuras servem para demonstrar estrutura, consistência e capacidade diagnóstica da cadeia; não devem ser descritas como estatística final de produção.
 
+## Dependência
+
+`matplotlib>=3.8` é dependência de execução do projeto.
+
 ## Caso inicial x1.10242
 
 ```bash
@@ -30,7 +34,7 @@ HDIAG=/p/projetos/monan_das/joao.gerd/work/mpas-bmatrix-global/bmatrix/covarianc
 DIRAC=/p/projetos/monan_das/joao.gerd/work/mpas-bmatrix-global/bmatrix/covariance/dirac/np128_2026061000_2026061300
 OUT=/p/projetos/monan_das/joao.gerd/work/mpas-bmatrix-global/bmatrix/figures_presentation_np128_2026061000_2026061300
 
-mpasbmatrix-figures \
+PYTHONPATH="$PWD/src" python -m mpas_workflow.bmatrix_presentation \
   --vbal-workspace "$VBAL" \
   --hdiag-workspace "$HDIAG" \
   --dirac-workspace "$DIRAC" \
@@ -40,4 +44,6 @@ mpasbmatrix-figures \
   --dpi 300
 ```
 
-Para inserir sobre um slide com fundo diferente, acrescente `--transparent`. O comando também escreve `README.md` no diretório de saída, identificando os workspaces empregados.
+O código procura automaticamente `latCell` e `lonCell` no workspace DIRAC, no caminho HDIAG registrado em `README.md` e no workspace irmão `covariance/hdiag/<nome-do-caso>`. Ele só aceita um arquivo de coordenadas com o mesmo número de células que a resposta DIRAC.
+
+Caso necessário, informe o NetCDF da malha explicitamente por `--coordinates-file`. O diretório de saída também recebe um `README.md` identificando os workspaces empregados.
