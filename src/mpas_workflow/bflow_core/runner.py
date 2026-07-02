@@ -10,7 +10,7 @@ from .psichi import convert_uv_to_psichi
 from .template import generate_template_ptb
 from .validate import validate_products
 from .variables import add_variables_for_pairs
-from .weights import generate_esmf_weights
+from .weights import ensure_esmf_weights, generate_esmf_weights
 
 
 def clean_outputs(workspace: Path) -> None:
@@ -44,10 +44,11 @@ def run_bflow_pipeline(
     if clean_output:
         clean_outputs(workspace)
 
-    if not skip_weights:
-        generate_esmf_weights(config, workspace)
+    if skip_weights:
+        print("Skipping automatic ESMF-weight generation because --skip-weights was requested")
+        ensure_esmf_weights(config, workspace)
     else:
-        print("Skipping ESMF weights because --skip-weights was requested")
+        generate_esmf_weights(config, workspace)
 
     generate_template_ptb(pairs[0].f048, workspace)
     convert_uv_to_psichi(config, workspace, pairs)
