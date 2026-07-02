@@ -1,0 +1,44 @@
+from __future__ import annotations
+
+import shutil
+from pathlib import Path
+
+from ..shell import write_text
+from ..vbal_core.model import vbal_date
+from ..vbal_core.validate import validate as validate_vbal
+from .config_files import write_hdiag_pbs, write_hdiag_yaml
+from .model import hdiag_workspace, require_hdiag_members
+from .static import link_hdiag_inputs
+
+
+def prepare(config, vbal_workspace: str | Path, workspace: str | Path | None = None, clean: bool = False) -> Path:
+    vbal_root = Path(vbal_workspace)
+    validate_vbal(vbal_root)
+    samples = sorted((vbal_root / "samplesUnbalanced").glob("PTB_f48mf24_*.nc"))
+    if not samples:
+        raise SystemExit("ERRO: nenhuma amostra unbalanced encontrada no workspace VBAL.")
+    require_hdiag_members(samples)
+
+    out = Path(workspace) if workspace else hdiag_workspace(config, vbal_root)
+    if clean and out.exists():
+        shutil.rmtree(out)
+    run_dir = out / "HDIAG"
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    link_hdiag_inputs(vbal_root, out, run_dir)
+    write_hdiag_yaml(run_dir / "run_hdiag.yaml", len(samples), vbal_date(vbal_root))
+    write_hdiag_pbs(config, run_dir)
+    write_text(
+        out / "README.md",
+        f"# HDIAG/NICAS workspace\n\nVBAL workspace: `{vbal_root}`\nMembers: {len(samples)}\n"
+        "\nHDIAG usa as amostras `samplesUnbalanced/PTB_f48mf24_%mem%.nc`, "
+        "produzidas pelo VBAL.\n",
+    )
+
+    print("=== HDIAG/NICAS workspace ===")
+    print(f"WORKSPACE={out}")
+    print(f"RUN_DIR={run_dir}")
+    print(f"MEMBERS={len(samples)}")
+    print(f"YAML={run_dir / 'run_hdiag.yaml'}")
+    print(f"PBS={run_dir / 'qsub_hdiag.bash'}")
+    return out
