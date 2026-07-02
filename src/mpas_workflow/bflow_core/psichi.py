@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 
@@ -8,12 +9,7 @@ import numpy as np
 
 from .external import require_files
 from .model import BflowPair, compact_time
-from .weights import (
-    apply_esmf_weights,
-    latlon_shape_from_weights,
-    load_esmf_sparse_weights,
-    weight_paths,
-)
+from .weights import apply_esmf_weights, load_esmf_sparse_weights, weight_paths
 
 MPAS_RADIUS_RATIO = 6_371_229.0 / 6_371_220.0
 
@@ -30,18 +26,49 @@ def _require_windspharm():
     return VectorWind
 
 
-def _latitudes_for_regular_grid(nlat: int) -> np.ndarray:
-    return np.linspace(-90.0 + 90.0 / nlat, 90.0 - 90.0 / nlat, nlat)
+def _configured_latlon_shape(weights, regridding: dict) -> tuple[int, int]:
+    """Resolve the regular auxiliary grid from ESMF metadata or the YAML contract."""
+    dims = weights.dst_grid_dims or weights.src_grid_dims
+    if len(dims) >= 2:
+        # ESMF/NCL convention for a regular grid is (nlon, nlat).
+        nlon, nlat = int(dims[0]), int(dims[1])
+        return nlat, nlon
+
+    resolution = regridding.get("scrip_resolution")
+    match = re.fullmatch(r"\s*(\d+(?:\.\d*)?|\.\d+)\s*(?:deg(?:ree)?s?)?\s*", str(resolution), re.IGNORECASE)
+    if match is None:
+        raise SystemExit(
+            "ERRO: não foi possível inferir a grade lat/lon dos pesos ESMF. "
+            "Defina bflow.regridding.scrip_resolution, por exemplo '1.0deg'."
+        )
+    delta = float(match.group(1))
+    lower_left = regridding.get("lower_left")
+    upper_right = regridding.get("upper_right")
+    if not isinstance(lower_left, list) or len(lower_left) != 2:
+        raise SystemExit("ERRO: bflow.regridding.lower_left deve ser [latitude, longitude].")
+    if not isinstance(upper_right, list) or len(upper_right) != 2:
+        raise SystemExit("ERRO: bflow.regridding.upper_right deve ser [latitude, longitude].")
+
+    lower_lat, lower_lon = map(float, lower_left)
+    upper_lat, upper_lon = map(float, upper_right)
+    nlat_float = (upper_lat - lower_lat) / delta + 1.0
+    nlon_float = (upper_lon - lower_lon) / delta + 1.0
+    nlat = round(nlat_float)
+    nlon = round(nlon_float)
+    if nlat < 2 or nlon < 2 or abs(nlat_float - nlat) > 1.0e-8 or abs(nlon_float - nlon) > 1.0e-8:
+        raise SystemExit(
+            "ERRO: lower_left, upper_right e scrip_resolution não definem uma grade regular inteira."
+        )
+    if weights.dst_size not in (nlat * nlon, 0) and weights.src_size not in (nlat * nlon, 0):
+        raise SystemExit(
+            "ERRO: o tamanho dos pesos ESMF não coincide com a grade auxiliar configurada: "
+            f"esperado {nlat}x{nlon}={nlat * nlon}, pesos src={weights.src_size}, dst={weights.dst_size}."
+        )
+    return nlat, nlon
 
 
 def _flat_to_latlon(values: np.ndarray, nlat: int, nlon: int) -> np.ndarray:
-    """Reshape ESMF flattened output to `(nlev, nlat, nlon)`.
-
-    The previous NCL workflow used a 1-degree regular auxiliary grid with output
-    shaped as `(nlev, nlat, nlon)`. ESMF weight files usually store regular grid
-    dimensions as `(nlon, nlat)`, so this reshape keeps the Python path aligned
-    with that convention. This still must be validated against one old NCL case.
-    """
+    """Reshape ESMF flattened output to ``(nlev, nlat, nlon)``."""
     return values.reshape((values.shape[0], nlat, nlon))
 
 
@@ -50,13 +77,7 @@ def _latlon_to_flat(values: np.ndarray) -> np.ndarray:
 
 
 def uv_to_psichi_windspharm(u_ll: np.ndarray, v_ll: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Convert regular-grid wind to streamfunction and velocity potential.
-
-    `windspharm` expects the latitude axis to be north-to-south. The BFLOW
-    auxiliary grid is represented south-to-north here, matching the old NCL
-    1-degree grid. Therefore we reverse latitude before and after calling
-    `VectorWind.sfvp()`.
-    """
+    """Convert regular-grid wind to streamfunction and velocity potential."""
     VectorWind = _require_windspharm()
     if u_ll.shape != v_ll.shape:
         raise ValueError(f"u/v com shapes diferentes: {u_ll.shape} != {v_ll.shape}")
@@ -64,6 +85,8 @@ def uv_to_psichi_windspharm(u_ll: np.ndarray, v_ll: np.ndarray) -> tuple[np.ndar
         raise ValueError(f"u_ll/v_ll devem ter shape (nlev, nlat, nlon); recebido {u_ll.shape}")
 
     # windspharm.standard expects dimensions as (nlat, nlon, nfields) for 3-D data.
+    # BFLOW keeps the auxiliary grid south-to-north, so latitude is reversed before
+    # and after the spectral transform.
     u_for_wind = np.transpose(u_ll[:, ::-1, :], (1, 2, 0))
     v_for_wind = np.transpose(v_ll[:, ::-1, :], (1, 2, 0))
     wind = VectorWind(u_for_wind, v_for_wind, gridtype="regular")
@@ -97,23 +120,22 @@ def convert_file(
     template: Path,
     mpas_to_latlon_weights,
     latlon_to_mpas_weights,
+    regridding: dict,
 ) -> None:
     require_files([input_path, template], "psi/chi windspharm")
-    nlat, nlon = latlon_shape_from_weights(mpas_to_latlon_weights)
+    nlat, nlon = _configured_latlon_shape(mpas_to_latlon_weights, regridding)
 
     with netCDF4.Dataset(input_path) as ds:
         for name in ("uReconstructZonal", "uReconstructMeridional"):
             if name not in ds.variables:
                 raise SystemExit(f"ERRO: variável ausente em {input_path}: {name}")
-        # MPAS files store wind as (Time, nCells, nVertLevels).  The sparse
-        # weight application expects (nlev, nCells), same convention as the old
-        # NCL script after transpose().
+        # MPAS files store wind as (Time, nCells, nVertLevels).  The sparse weight
+        # application expects (nlev, nCells), as in the original NCL calculation.
         u_cell = np.asarray(ds.variables["uReconstructZonal"][0, :, :], dtype="f8").T
         v_cell = np.asarray(ds.variables["uReconstructMeridional"][0, :, :], dtype="f8").T
 
     u_ll = _flat_to_latlon(apply_esmf_weights(u_cell, mpas_to_latlon_weights), nlat, nlon)
     v_ll = _flat_to_latlon(apply_esmf_weights(v_cell, mpas_to_latlon_weights), nlat, nlon)
-
     psi_ll, chi_ll = uv_to_psichi_windspharm(u_ll, v_ll)
 
     psi_mpas = apply_esmf_weights(_latlon_to_flat(psi_ll), latlon_to_mpas_weights)
@@ -129,6 +151,11 @@ def convert_pair(config, workspace: Path, pair: BflowPair) -> None:
     template = workspace / "template_PTB.nc"
     require_files([template], "psi/chi windspharm")
 
+    bflow = config.get("bflow") if isinstance(config, dict) else None
+    regridding = bflow.get("regridding") if isinstance(bflow, dict) else None
+    if not isinstance(regridding, dict):
+        raise SystemExit("ERRO: configuração bflow.regridding não encontrada para a conversão psi/chi.")
+
     vcompact = compact_time(pair.valid_time)
     outdir = workspace / "output" / vcompact
     outdir.mkdir(parents=True, exist_ok=True)
@@ -143,6 +170,7 @@ def convert_pair(config, workspace: Path, pair: BflowPair) -> None:
             template,
             mpas_to_latlon_weights,
             latlon_to_mpas_weights,
+            regridding,
         )
         require_files([output_path], f"psi/chi windspharm {label} output")
 

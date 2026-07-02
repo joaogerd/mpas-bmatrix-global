@@ -23,6 +23,14 @@ def pairs_from_args(args, config) -> tuple[list[BflowPair], str, str]:
         pairs = build_pairs_from_range(config, args.start_valid_time, args.end_valid_time, args.valid_interval_hours, dt)
         start = args.start_valid_time
         end = args.end_valid_time
+
+    minimum_pairs = int(getattr(args, "minimum_pairs", 1))
+    if minimum_pairs < 1:
+        raise SystemExit("ERRO: --minimum-pairs deve ser um inteiro positivo.")
+    if len(pairs) < minimum_pairs:
+        raise SystemExit(
+            f"ERRO: manifesto/range possui {len(pairs)} pares, mas --minimum-pairs exige {minimum_pairs}."
+        )
     return pairs, start, end
 
 
