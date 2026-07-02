@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from mpas_workflow.bflow_core.weights import _mpas_ugrid, weight_paths
+from mpas_workflow.bflow_core.weights import _read_mpas_geometry, weight_paths
 from mpas_workflow.dirac_summary import summarize_dirac_file
 
 
@@ -40,9 +40,8 @@ def test_bflow_weight_paths_follow_the_regridding_contract(tmp_path):
     assert latlon_to_mpas == tmp_path / "weights/x1.test/regular_to_mpas_x1.test.nc"
 
 
-def test_mpas_ugrid_converts_mpas_indices_and_radians(tmp_path):
+def test_mpas_geometry_converts_radians_and_preserves_connectivity(tmp_path):
     netCDF4 = pytest.importorskip("netCDF4")
-    xr = pytest.importorskip("xarray")
     path = tmp_path / "mesh.nc"
     with netCDF4.Dataset(path, "w") as dataset:
         dataset.createDimension("nCells", 2)
@@ -60,11 +59,11 @@ def test_mpas_ugrid_converts_mpas_indices_and_radians(tmp_path):
         vertices = dataset.createVariable("verticesOnCell", "i4", ("nCells", "maxEdges"))
         vertices[:] = [[1, 2, 3, 0], [1, 3, 4, 2]]
 
-    mesh = _mpas_ugrid(path, xr)
+    node_lon, node_lat, face_lon, face_lat, connectivity, edge_count = _read_mpas_geometry(path)
 
-    assert mesh["face_node_connectivity"].values.tolist() == [[0, 1, 2, -1], [0, 2, 3, 1]]
-    assert mesh["face_node_connectivity"].attrs["start_index"] == 0
-    assert mesh["face_node_connectivity"].attrs["_FillValue"] == -1
-    assert mesh["node_lon"].values[1] == pytest.approx(30.0)
-    assert mesh["face_lat"].values[1] == pytest.approx(30.0)
-    assert mesh["mesh"].attrs["cf_role"] == "mesh_topology"
+    assert node_lon[1] == pytest.approx(30.0)
+    assert face_lat[1] == pytest.approx(30.0)
+    assert node_lat.shape == (4,)
+    assert face_lon.shape == (2,)
+    assert connectivity.tolist() == [[1, 2, 3, 0], [1, 3, 4, 2]]
+    assert edge_count.tolist() == [3, 4]
