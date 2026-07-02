@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 from ..config import load_config
+from ..nmc_core.model import MINIMUM_PAIRS
 from .manifest import read_manifest
 from .model import DEFAULT_CONFIG, BflowPair, build_pairs_from_range, default_workspace
 from .runner import run_bflow_pipeline
@@ -40,7 +41,13 @@ def workspace_from_args(args, config, start: str, end: str) -> Path:
 def prepare_command(args) -> int:
     config = load_config(args.config)
     pairs, start, end = pairs_from_args(args, config)
-    workspace = prepare_workspace(config, pairs, workspace_from_args(args, config, start, end), force=args.force)
+    workspace = prepare_workspace(
+        config,
+        pairs,
+        workspace_from_args(args, config, start, end),
+        force=args.force,
+        minimum_pairs=args.minimum_pairs,
+    )
     print("=== Bflow preprocessing workspace ===")
     print(f"WORKSPACE={workspace}")
     print(f"MANIFEST={workspace / 'manifest.tsv'}")
@@ -60,7 +67,13 @@ def run_command(args) -> int:
 def all_command(args) -> int:
     config = load_config(args.config)
     pairs, start, end = pairs_from_args(args, config)
-    workspace = prepare_workspace(config, pairs, workspace_from_args(args, config, start, end), force=args.force)
+    workspace = prepare_workspace(
+        config,
+        pairs,
+        workspace_from_args(args, config, start, end),
+        force=args.force,
+        minimum_pairs=args.minimum_pairs,
+    )
     print("=== Bflow preprocessing all ===")
     print(f"WORKSPACE={workspace}")
     print(f"PAIRS={len(pairs)}")
@@ -78,7 +91,7 @@ def add_common_range_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--dt", type=int)
     parser.add_argument("--manifest")
     parser.add_argument("--workspace")
-    parser.add_argument("--minimum-pairs", type=int, default=1)
+    parser.add_argument("--minimum-pairs", type=int, default=MINIMUM_PAIRS)
     parser.add_argument("--force", action="store_true")
 
 

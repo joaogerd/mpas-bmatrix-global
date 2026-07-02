@@ -36,6 +36,7 @@ dev = [
 mpaswf = "mpas_workflow.cli:main"
 mpasbm = "mpas_workflow.bmatrix:main"
 mpasbflow = "mpas_workflow.bflow:main"
+mpasnmc = "mpas_workflow.nmc_core.cli:main"
 mpasdirac-summary = "mpas_workflow.dirac_summary:main"
 mpasverify = "mpas_workflow.verify:main"
 mpasforecast = "mpas_workflow.mpas_core.cli:main"

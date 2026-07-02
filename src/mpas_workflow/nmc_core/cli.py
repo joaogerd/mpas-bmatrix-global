@@ -1,29 +1,29 @@
+"""CLI for validating producer-supplied NMC campaign manifests."""
 from __future__ import annotations
 
 import argparse
-import csv
 import json
-from pathlib import Path
+
+from .checks import validate_manifest
+from .model import MINIMUM_PAIRS
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(prog="mpasnmc")
-    parser.add_argument("command", choices=["validate-manifest"])
-    parser.add_argument("--manifest", required=True)
-    parser.add_argument("--minimum-pairs", type=int, default=4)
-    args = parser.parse_args(argv)
-    path = Path(args.manifest)
-    with path.open(newline="", encoding="utf-8") as stream:
-        rows = list(csv.DictReader(stream, delimiter="\t"))
-    if len(rows) < args.minimum_pairs:
-        raise SystemExit(f"ERRO: manifesto possui {len(rows)} pares; mínimo: {args.minimum_pairs}.")
-    pairs = []
-    for row in rows:
-        f048, f024 = Path(row["f048"]), Path(row["f024"])
-        if not f048.is_file() or not f024.is_file() or not f048.stat().st_size or not f024.stat().st_size:
-            raise SystemExit("ERRO: manifesto contém produto ausente ou vazio.")
-        pairs.append({"valid_time": row["valid_time"], "f048": {"path": str(f048), "bytes": f048.stat().st_size}, "f024": {"path": str(f024), "bytes": f024.stat().st_size}})
-    print(json.dumps({"manifest": str(path), "minimum_pairs": args.minimum_pairs, "pair_count": len(rows), "pairs": pairs, "valid": True}, indent=2))
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(
+        prog="mpasnmc",
+        description="Valida manifestos NMC f048/f024 antes do BFLOW.",
+    )
+    sub = result.add_subparsers(dest="command", required=True)
+    validate = sub.add_parser("validate-manifest", help="confere pares, cronologia e arquivos mpasout")
+    validate.add_argument("--manifest", required=True)
+    validate.add_argument("--minimum-pairs", type=int, default=MINIMUM_PAIRS)
+    return result
+
+
+def main(argv=None) -> int:
+    args = parser().parse_args(argv)
+    if args.command == "validate-manifest":
+        print(json.dumps(validate_manifest(args.manifest, minimum_pairs=args.minimum_pairs), indent=2, sort_keys=True))
     return 0
 
 
