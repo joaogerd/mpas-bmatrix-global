@@ -24,6 +24,12 @@ dependencies:
   - windspharm>=2.0
   - pyspharm>=1.0.9
 
+  # Geração Python dos pesos ESMF: xESMF usa ESMPy/ESMF e UXarray
+  # normaliza a topologia nativa MPAS para UGRID.
+  - esmpy
+  - xesmf>=0.9
+  - uxarray>=2025.0
+
   # Desenvolvimento
   - pytest
   - ruff
