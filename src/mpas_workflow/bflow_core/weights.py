@@ -120,9 +120,11 @@ def _grid(regrid, xr):
 
 
 def _mesh_path(config, regrid, workspace):
-    value = regrid.get("mesh_file", config["mesh"].get("grid"))
+    value = regrid.get("mesh_file")
+    if value is None:
+        value = config.get("mesh", {}).get("grid") or config.get("static", {}).get("invariant")
     if not isinstance(value, str) or not value:
-        raise SystemExit("ERRO: informe mesh.grid ou bflow.regridding.mesh_file.")
+        raise SystemExit("ERRO: informe bflow.regridding.mesh_file, mesh.grid ou static.invariant.")
     path = Path(value.format(mesh_name=config["mesh"]["name"]))
     return path if path.is_absolute() else Path(workspace) / path
 
