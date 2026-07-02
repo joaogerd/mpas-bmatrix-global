@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 
@@ -8,12 +9,7 @@ import numpy as np
 
 from .external import require_files
 from .model import BflowPair, compact_time
-from .weights import (
-    apply_esmf_weights,
-    latlon_shape_from_weights,
-    load_esmf_sparse_weights,
-    weight_paths,
-)
+from .weights import apply_esmf_weights, load_esmf_sparse_weights, weight_paths
 
 MPAS_RADIUS_RATIO = 6_371_229.0 / 6_371_220.0
 
@@ -28,6 +24,47 @@ def _require_windspharm():
             "  conda install -c conda-forge windspharm pyspharm"
         ) from exc
     return VectorWind
+
+
+def _configured_latlon_shape(weights, regridding: dict) -> tuple[int, int]:
+    """Resolve the regular auxiliary grid from ESMF metadata or the YAML contract."""
+    dims = weights.dst_grid_dims or weights.src_grid_dims
+    if len(dims) >= 2:
+        # ESMF/NCL convention for a regular grid is (nlon, nlat).
+        nlon, nlat = int(dims[0]), int(dims[1])
+        return nlat, nlon
+
+    resolution = regridding.get("scrip_resolution")
+    match = re.fullmatch(r"\s*(\d+(?:\.\d*)?|\.\d+)\s*(?:deg(?:ree)?s?)?\s*", str(resolution), re.IGNORECASE)
+    if match is None:
+        raise SystemExit(
+            "ERRO: não foi possível inferir a grade lat/lon dos pesos ESMF. "
+            "Defina bflow.regridding.scrip_resolution, por exemplo '1.0deg'."
+        )
+    delta = float(match.group(1))
+    lower_left = regridding.get("lower_left")
+    upper_right = regridding.get("upper_right")
+    if not isinstance(lower_left, list) or len(lower_left) != 2:
+        raise SystemExit("ERRO: bflow.regridding.lower_left deve ser [latitude, longitude].")
+    if not isinstance(upper_right, list) or len(upper_right) != 2:
+        raise SystemExit("ERRO: bflow.regridding.upper_right deve ser [latitude, longitude].")
+
+    lower_lat, lower_lon = map(float, lower_left)
+    upper_lat, upper_lon = map(float, upper_right)
+    nlat_float = (upper_lat - lower_lat) / delta + 1.0
+    nlon_float = (upper_lon - lower_lon) / delta + 1.0
+    nlat = round(nlat_float)
+    nlon = round(nlon_float)
+    if nlat < 2 or nlon < 2 or abs(nlat_float - nlat) > 1.0e-8 or abs(nlon_float - nlon) > 1.0e-8:
+        raise SystemExit(
+            "ERRO: lower_left, upper_right e scrip_resolution não definem uma grade regular inteira."
+        )
+    if weights.dst_size not in (nlat * nlon, 0) and weights.src_size not in (nlat * nlon, 0):
+        raise SystemExit(
+            "ERRO: o tamanho dos pesos ESMF não coincide com a grade auxiliar configurada: "
+            f"esperado {nlat}x{nlon}={nlat * nlon}, pesos src={weights.src_size}, dst={weights.dst_size}."
+        )
+    return nlat, nlon
 
 
 def _flat_to_latlon(values: np.ndarray, nlat: int, nlon: int) -> np.ndarray:
@@ -86,7 +123,7 @@ def convert_file(
     regridding: dict,
 ) -> None:
     require_files([input_path, template], "psi/chi windspharm")
-    nlat, nlon = latlon_shape_from_weights(mpas_to_latlon_weights, regridding=regridding)
+    nlat, nlon = _configured_latlon_shape(mpas_to_latlon_weights, regridding)
 
     with netCDF4.Dataset(input_path) as ds:
         for name in ("uReconstructZonal", "uReconstructMeridional"):
