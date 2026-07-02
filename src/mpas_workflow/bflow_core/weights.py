@@ -248,20 +248,20 @@ def _destroy(value):
             pass
 
 
+def _field(grid, *, is_mesh, ESMF):
+    if is_mesh:
+        return ESMF.Field(grid, meshloc=ESMF.MeshLoc.ELEMENT)
+    return ESMF.Field(grid)
+
+
 def _write_weights(path, source, destination, *, source_mesh, destination_mesh, method, ESMF):
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         path.unlink()
     source_field = destination_field = regrid = None
     try:
-        source_field = ESMF.Field(
-            source,
-            meshloc=ESMF.MeshLoc.ELEMENT if source_mesh else None,
-        )
-        destination_field = ESMF.Field(
-            destination,
-            meshloc=ESMF.MeshLoc.ELEMENT if destination_mesh else None,
-        )
+        source_field = _field(source, is_mesh=source_mesh, ESMF=ESMF)
+        destination_field = _field(destination, is_mesh=destination_mesh, ESMF=ESMF)
         regrid = ESMF.Regrid(
             source_field,
             destination_field,
