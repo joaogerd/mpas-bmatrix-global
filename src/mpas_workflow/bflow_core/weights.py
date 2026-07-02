@@ -20,7 +20,7 @@ class EsmfSparseWeights:
 
 
 def _dims(ds, name):
-    return tuple(int(v) for v in np.asarray(ds[name][:]).ravel() if int(v) > 0) if name in ds.variables else ()
+    return tuple(int(value) for value in np.asarray(ds[name][:]).ravel() if int(value) > 0) if name in ds.variables else ()
 
 
 def _check(path):
@@ -104,16 +104,18 @@ def ensure_esmf_weights(config, workspace):
     return paths
 
 
-def _stack():
+def _esmf():
     try:
-        import xarray as xr
-        import xesmf as xe
-    except ImportError as exc:
-        raise SystemExit("ERRO: instale xarray, xesmf e esmpy com conda-forge.") from exc
-    return xr, xe
+        import esmpy as ESMF
+    except ImportError:
+        try:
+            import ESMF
+        except ImportError as exc:
+            raise SystemExit("ERRO: instale esmpy com conda-forge para gerar os pesos ESMF.") from exc
+    return ESMF
 
 
-def _grid(regrid, xr):
+def _grid_coordinates(regrid):
     lower, upper = regrid.get("lower_left"), regrid.get("upper_right")
     text = str(regrid.get("scrip_resolution")).lower().replace("deg", "")
     try:
@@ -129,12 +131,7 @@ def _grid(regrid, xr):
         lower[1] + (nlon - 1) * dlon, upper[1]
     ):
         raise SystemExit("ERRO: limites e resolução não definem uma grade regular inteira.")
-    return xr.Dataset(
-        coords={
-            "lat": ("lat", np.linspace(lower[0], upper[0], nlat)),
-            "lon": ("lon", np.linspace(lower[1], upper[1], nlon)),
-        }
-    )
+    return np.linspace(lower[1], upper[1], nlon), np.linspace(lower[0], upper[0], nlat)
 
 
 def _mesh_path(config, regrid, workspace):
@@ -153,36 +150,35 @@ def _to_degrees(lat, lon):
     return lat, lon
 
 
-def _cells(mesh_path, xr):
-    with xr.open_dataset(mesh_path, decode_cf=False) as ds:
-        if "latCell" not in ds or "lonCell" not in ds:
-            raise SystemExit(f"ERRO: malha MPAS sem latCell/lonCell: {mesh_path}")
-        lat, lon = np.asarray(ds["latCell"]), np.asarray(ds["lonCell"])
-    lat, lon = _to_degrees(lat, lon)
-    return xr.Dataset({"lat": ("nCells", lat), "lon": ("nCells", lon)})
-
-
-def _mpas_ugrid(mesh_path, xr):
-    """Return the MPAS cell mesh as the native xarray/UGRID contract for xESMF."""
+def _read_mpas_geometry(mesh_path):
     required = {"latCell", "lonCell", "latVertex", "lonVertex", "verticesOnCell", "nEdgesOnCell"}
-    with xr.open_dataset(mesh_path, decode_cf=False) as source:
-        missing = sorted(required.difference(source.variables))
+    with netCDF4.Dataset(mesh_path) as ds:
+        missing = sorted(required.difference(ds.variables))
         if missing:
-            raise SystemExit(f"ERRO: malha MPAS sem variáveis UGRID requeridas: {', '.join(missing)}")
-        face_lat = np.asarray(source["latCell"].values, dtype="f8")
-        face_lon = np.asarray(source["lonCell"].values, dtype="f8")
-        node_lat = np.asarray(source["latVertex"].values, dtype="f8")
-        node_lon = np.asarray(source["lonVertex"].values, dtype="f8")
-        connectivity = np.asarray(source["verticesOnCell"].values, dtype="i8")
-        edge_count = np.asarray(source["nEdgesOnCell"].values, dtype="i8")
-
+            raise SystemExit(f"ERRO: malha MPAS sem variáveis requeridas: {', '.join(missing)}")
+        face_lat = np.asarray(ds["latCell"][:], dtype="f8")
+        face_lon = np.asarray(ds["lonCell"][:], dtype="f8")
+        node_lat = np.asarray(ds["latVertex"][:], dtype="f8")
+        node_lon = np.asarray(ds["lonVertex"][:], dtype="f8")
+        connectivity = np.asarray(ds["verticesOnCell"][:], dtype="i8")
+        edge_count = np.asarray(ds["nEdgesOnCell"][:], dtype="i8")
     if connectivity.ndim != 2 or edge_count.shape != (connectivity.shape[0],):
         raise SystemExit(f"ERRO: conectividade MPAS inválida em {mesh_path}")
     if np.any(edge_count < 3) or np.any(edge_count > connectivity.shape[1]):
         raise SystemExit(f"ERRO: nEdgesOnCell inválido em {mesh_path}")
-
     face_lat, face_lon = _to_degrees(face_lat, face_lon)
     node_lat, node_lon = _to_degrees(node_lat, node_lon)
+    return node_lon, node_lat, face_lon, face_lat, connectivity, edge_count
+
+
+def _lonlat_to_xyz(lon, lat):
+    lon_rad = np.deg2rad(lon)
+    lat_rad = np.deg2rad(lat)
+    return np.cos(lat_rad) * np.cos(lon_rad), np.cos(lat_rad) * np.sin(lon_rad), np.sin(lat_rad)
+
+
+def _mpas_mesh(mesh_path, ESMF):
+    node_lon, node_lat, face_lon, face_lat, connectivity, edge_count = _read_mpas_geometry(mesh_path)
     faces = np.full(connectivity.shape, -1, dtype="i8")
     for face, count in enumerate(edge_count):
         vertices = connectivity[face, :count]
@@ -190,41 +186,99 @@ def _mpas_ugrid(mesh_path, xr):
             raise SystemExit(f"ERRO: verticesOnCell inválido para célula {face} em {mesh_path}")
         faces[face, :count] = vertices - 1
 
-    mesh = xr.Dataset(
-        data_vars={
-            "node_lon": ("n_node", node_lon),
-            "node_lat": ("n_node", node_lat),
-            "face_lon": ("n_face", face_lon),
-            "face_lat": ("n_face", face_lat),
-            "face_node_connectivity": (("n_face", "n_max_face_nodes"), faces),
-        }
+    node_x, node_y, node_z = _lonlat_to_xyz(node_lon, node_lat)
+    face_x, face_y, face_z = _lonlat_to_xyz(face_lon, face_lat)
+    mesh = ESMF.Mesh(parametric_dim=2, spatial_dim=3)
+    node_count = node_lon.size
+    mesh.add_nodes(
+        node_count,
+        np.arange(1, node_count + 1, dtype="i4"),
+        np.column_stack((node_x, node_y, node_z)).ravel(),
+        np.zeros(node_count, dtype="i4"),
     )
-    mesh["mesh"] = xr.DataArray(
-        np.int8(0),
-        attrs={
-            "cf_role": "mesh_topology",
-            "topology_dimension": 2,
-            "node_coordinates": "node_lon node_lat",
-            "face_coordinates": "face_lon face_lat",
-            "face_node_connectivity": "face_node_connectivity",
-        },
+
+    element_types = edge_count.astype("i4")
+    flat_connectivity = np.concatenate(
+        [np.asarray(row[:count], dtype="i4") for row, count in zip(faces, edge_count)]
     )
-    mesh["node_lon"].attrs.update({"standard_name": "longitude", "units": "degrees_east"})
-    mesh["node_lat"].attrs.update({"standard_name": "latitude", "units": "degrees_north"})
-    mesh["face_lon"].attrs.update({"standard_name": "longitude", "units": "degrees_east"})
-    mesh["face_lat"].attrs.update({"standard_name": "latitude", "units": "degrees_north"})
-    mesh["face_node_connectivity"].attrs.update(
-        {"cf_role": "face_node_connectivity", "start_index": 0, "_FillValue": -1}
+    mesh.add_elements(
+        faces.shape[0],
+        np.arange(1, faces.shape[0] + 1, dtype="i4"),
+        element_types,
+        flat_connectivity,
+        element_coords=np.column_stack((face_x, face_y, face_z)).ravel(),
     )
     return mesh
 
 
-def _write(path, create):
+def _latlon_grid(regrid, ESMF, *, periodic):
+    lon_1d, lat_1d = _grid_coordinates(regrid)
+    lon, lat = np.meshgrid(lon_1d, lat_1d, indexing="ij")
+    lon = np.asfortranarray(lon)
+    lat = np.asfortranarray(lat)
+    grid = ESMF.Grid(
+        np.asarray(lon.shape, dtype="i4"),
+        staggerloc=ESMF.StaggerLoc.CENTER,
+        coord_sys=ESMF.CoordSys.SPH_DEG,
+        num_peri_dims=1 if periodic else None,
+    )
+    grid.get_coords(coord_dim=0, staggerloc=ESMF.StaggerLoc.CENTER)[...] = lon
+    grid.get_coords(coord_dim=1, staggerloc=ESMF.StaggerLoc.CENTER)[...] = lat
+    return grid
+
+
+def _method(method, ESMF):
+    values = {
+        "bilinear": ESMF.RegridMethod.BILINEAR,
+        "patch": ESMF.RegridMethod.PATCH,
+        "nearest_s2d": ESMF.RegridMethod.NEAREST_STOD,
+        "nearest_d2s": ESMF.RegridMethod.NEAREST_DTOS,
+    }
+    try:
+        return values[method]
+    except KeyError as exc:
+        raise SystemExit("ERRO: método não suportado para MPAS/lat-lon.") from exc
+
+
+def _destroy(value):
+    if value is not None:
+        try:
+            value.destroy()
+        except Exception:
+            pass
+
+
+def _write_weights(path, source, destination, *, source_mesh, destination_mesh, method, ESMF):
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         path.unlink()
-    regridder = create(str(path))
-    del regridder
+    source_field = destination_field = regrid = None
+    try:
+        source_field = ESMF.Field(
+            source,
+            meshloc=ESMF.MeshLoc.ELEMENT if source_mesh else None,
+        )
+        destination_field = ESMF.Field(
+            destination,
+            meshloc=ESMF.MeshLoc.ELEMENT if destination_mesh else None,
+        )
+        regrid = ESMF.Regrid(
+            source_field,
+            destination_field,
+            filename=str(path),
+            regrid_method=_method(method, ESMF),
+            unmapped_action=ESMF.UnmappedAction.IGNORE,
+            ignore_degenerate=False,
+            norm_type=ESMF.NormType.DSTAREA,
+        )
+    except Exception as exc:
+        raise SystemExit(f"ERRO: ESMF não conseguiu gerar pesos em {path}: {exc}") from exc
+    finally:
+        _destroy(regrid)
+        _destroy(source_field)
+        _destroy(destination_field)
+        _destroy(source)
+        _destroy(destination)
     _check(path)
 
 
@@ -236,42 +290,33 @@ def generate_esmf_weights(config, workspace):
         print("Reusing existing ESMF weights")
         return ensure_esmf_weights(config, workspace)
 
-    xr, xe = _stack()
+    ESMF = _esmf()
     regrid = _regrid(config)
     mesh_path = _mesh_path(config, regrid, workspace)
     if not mesh_path.exists():
         raise SystemExit(f"ERRO: malha MPAS não encontrada: {mesh_path}")
     method = regrid.get("interpolation_method", "bilinear")
-    if method not in {"bilinear", "patch", "nearest_s2d", "nearest_d2s"}:
-        raise SystemExit("ERRO: método não suportado para MPAS/lat-lon.")
+    _method(method, ESMF)
+    print("Generating missing ESMF weights directly with ESMPy")
 
-    latlon = _grid(regrid, xr)
-    print("Generating missing ESMF weights with Python xESMF and explicit MPAS UGRID")
     if mpas_to_latlon in missing:
-        mesh = _mpas_ugrid(mesh_path, xr)
-        _write(
+        _write_weights(
             mpas_to_latlon,
-            lambda filename: xe.Regridder(
-                mesh,
-                latlon,
-                method,
-                mesh_in=True,
-                filename=filename,
-                reuse_weights=False,
-            ),
+            _mpas_mesh(mesh_path, ESMF),
+            _latlon_grid(regrid, ESMF, periodic=False),
+            source_mesh=True,
+            destination_mesh=False,
+            method=method,
+            ESMF=ESMF,
         )
     if latlon_to_mpas in missing:
-        cells = _cells(mesh_path, xr)
-        _write(
+        _write_weights(
             latlon_to_mpas,
-            lambda filename: xe.Regridder(
-                latlon,
-                cells,
-                method,
-                locstream_out=True,
-                periodic=bool(regrid.get("periodic", True)),
-                filename=filename,
-                reuse_weights=False,
-            ),
+            _latlon_grid(regrid, ESMF, periodic=bool(regrid.get("periodic", True))),
+            _mpas_mesh(mesh_path, ESMF),
+            source_mesh=False,
+            destination_mesh=True,
+            method=method,
+            ESMF=ESMF,
         )
     return ensure_esmf_weights(config, workspace)
