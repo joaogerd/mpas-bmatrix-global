@@ -24,6 +24,8 @@ dependencies = [
 [project.optional-dependencies]
 bflow = [
   "windspharm>=2.0",
+  "xesmf>=0.9",
+  "uxarray>=2025.0",
 ]
 dev = [
   "pytest>=8",
