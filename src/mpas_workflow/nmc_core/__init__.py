@@ -1,0 +1,1 @@
+"""NMC campaign validation utilities."""
