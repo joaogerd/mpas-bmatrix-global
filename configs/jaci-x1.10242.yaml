@@ -56,5 +56,8 @@ pbs:
   walltime_long: "02:00:00"
 
 runtime:
-  config_dt: 60
+  # x1.10242 é uma malha global de ~240 km. 60 s é útil para debug conservador,
+  # mas torna forecasts f024/f048 desnecessariamente caros. O padrão operacional
+  # deste workflow usa 1200 s; pode ser sobrescrito por --dt quando necessário.
+  config_dt: 1200
   output_interval: "24:00:00"
