@@ -36,7 +36,7 @@ def run_bflow_pipeline(
     clean_output: bool = False,
     skip_weights: bool = False,
 ) -> list[Path]:
-    workspace = Path(workspace)
+    workspace = Path(workspace).resolve()
     pairs = pairs or load_workspace_pairs(workspace)
     (workspace / "logs").mkdir(parents=True, exist_ok=True)
     (workspace / "output").mkdir(parents=True, exist_ok=True)
